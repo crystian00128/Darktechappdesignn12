@@ -259,19 +259,6 @@ export function ClientePanel() {
     cancelled: { label: "Cancelado", color: "#ff006e" },
   };
 
-  if (loading) {
-    return (
-      <div className="h-dvh bg-[#050508] flex items-center justify-center">
-        <div className="text-center">
-          <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="inline-block mb-4">
-            <Loader className="w-12 h-12 text-[#00f0ff]" />
-          </motion.div>
-          <p className="text-white font-semibold text-base">Carregando dados...</p>
-        </div>
-      </div>
-    );
-  }
-
   const chatContacts = vendedor
     ? [{ username: vendedor.username, name: vendedor.name || "Vendedor", photo: vendedor.photo || "", role: vendedor.role }]
     : [];
@@ -294,6 +281,19 @@ export function ClientePanel() {
     const interval = setInterval(poll, 8000);
     return () => clearInterval(interval);
   }, [currentUser.username, chatContacts.length]);
+
+  if (loading) {
+    return (
+      <div className="h-dvh bg-[#050508] flex items-center justify-center">
+        <div className="text-center">
+          <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="inline-block mb-4">
+            <Loader className="w-12 h-12 text-[#00f0ff]" />
+          </motion.div>
+          <p className="text-white font-semibold text-base">Carregando dados...</p>
+        </div>
+      </div>
+    );
+  }
 
   const tabs = [
     { id: "chat" as const, icon: <MessageSquare className="w-5 h-5" />, label: "Chat", badge: totalUnread > 0 ? totalUnread : undefined },

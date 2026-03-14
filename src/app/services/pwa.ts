@@ -116,6 +116,7 @@ export function canPromptInstall(): boolean {
 
 export function isStandalone(): boolean {
   return (
+    window.matchMedia('(display-mode: fullscreen)').matches ||
     window.matchMedia('(display-mode: standalone)').matches ||
     (window.navigator as any).standalone === true ||
     document.referrer.includes('android-app://')

@@ -135,8 +135,17 @@ export default function App() {
 
       // 9. Log standalone mode
       if (isStandalone()) {
-        console.log("[PWA] Rodando em modo standalone (PWA instalado!)");
+        console.log("[PWA] Rodando em modo standalone/fullscreen (PWA instalado!)");
         document.documentElement.classList.add("pwa-standalone");
+
+        // Request Fullscreen API for maximum immersion (hides navigation bar)
+        // Only if display-mode is fullscreen but system hasn't auto-applied it
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+          // Attempt fullscreen — some browsers allow it in standalone PWA context
+          document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {
+            console.log("[PWA] Fullscreen API not auto-grantable — browser will handle via manifest");
+          });
+        }
       }
     };
 
@@ -189,11 +198,11 @@ function addPWAMetaTags() {
   }
 
   // Core PWA meta tags
-  setMeta("theme-color", "#00f0ff");
+  setMeta("theme-color", "#050508");
   setMeta("mobile-web-app-capable", "yes");
   setMeta("application-name", "NeonDelivery");
-  setMeta("msapplication-TileColor", "#0a0a0f");
-  setMeta("msapplication-navbutton-color", "#00f0ff");
+  setMeta("msapplication-TileColor", "#050508");
+  setMeta("msapplication-navbutton-color", "#050508");
   setMeta("format-detection", "telephone=no");
 
   // iOS-specific meta tags
@@ -217,7 +226,7 @@ function addPWAMetaTags() {
     const meta = document.createElement("meta");
     meta.setAttribute("name", "theme-color");
     meta.setAttribute("media", "(prefers-color-scheme: dark)");
-    meta.setAttribute("content", "#0a0a0f");
+    meta.setAttribute("content", "#050508");
     head.appendChild(meta);
   }
 }

@@ -5,11 +5,11 @@
   "description": "Sistema completo de delivery com design dark tech futurista. Pedidos, chat, pagamentos PIX e rastreamento em tempo real.",
   "start_url": "/?source=pwa",
   "scope": "/",
-  "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "portrait",
-  "theme_color": "#00f0ff",
-  "background_color": "#0a0a0f",
+  "theme_color": "#050508",
+  "background_color": "#050508",
   "categories": ["business", "food", "shopping", "lifestyle"],
   "lang": "pt-BR",
   "dir": "ltr",
@@ -55,14 +55,14 @@
   "screenshots": [
     {
       "src": "/icons/screenshot-narrow.png",
-      "sizes": "512x512",
+      "sizes": "540x720",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "Tela inicial do NeonDelivery"
     },
     {
       "src": "/icons/screenshot-wide.png",
-      "sizes": "512x512",
+      "sizes": "720x540",
       "type": "image/png",
       "form_factor": "wide",
       "label": "Dashboard NeonDelivery"

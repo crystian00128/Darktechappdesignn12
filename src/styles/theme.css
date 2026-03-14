@@ -147,6 +147,17 @@
     }
   }
 
+  /* PWA Fullscreen mode adjustments */
+  @media (display-mode: fullscreen) {
+    body {
+      /* Safe area padding for fullscreen PWA (notch devices) */
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+  }
+
   /* Prevent zoom on iOS inputs */
   input, select, textarea {
     font-size: 16px !important;
