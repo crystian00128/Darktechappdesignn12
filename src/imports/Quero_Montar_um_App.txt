@@ -1,0 +1,58 @@
+Quero Montar um App 
+
+A pagina de Login, Tem 2 Opções (Acessar Conta, Inserir Código), Não e Possível Criar uma conta nesse app, a não ser se for convidado, Existe 4 Paineis.
+
+
+1° Painel (ADMIN) - Dono do app
+
+A)-Dashboard - Vai mostrar todos os dados necessários que devem existir.
+B)-Usuários - Vai mostrar todos os Vendedores Cadastrados em hierarquia, quando apertar a setinha para baixo vai mostrar quantidade de clientes e Motoristas que ele cadastrou.
+C)-Código de Convite - O admin gerar um código Aleatorio para Permitir a Criação do Vendedor, esse código o Vendedor vai inserir no painel Inicial (Inserir Código), automaticamente vai mostrar que ele é vendedor. Quando inserir todos os dados ele vai ter acesso ao painel vendedor.
+D)-Taxa admin- Vai mostrar todos os vendedores e eu vou colocar a % da taxa sobre o faturamento geral do vendedor que vender dentro do app, vai mostrar dentro do painel vendedor a % cobrada, valor vendido e valor a receber descontando a % adm. 
+E)- Segurança - Vai mostrar todos os vendedores e hierarquia dos usuários desse vendedor (Cliente e Motorista), Se clicar em Vendedor eu posso Trocar a senha em PIN, e assim pelos demais contas.
+F)- API- Eu vou selecionar a API KEY essa api é para receber pagamentos. ESSA API É DA PIXWAVE VOU RECEBER TUDO NA MINHA CARTEIRA DESCENTRALIZADA EM DEPIX. 
+G)- Faturamento - Vai mostrar todos Vendedores onde vai mostrar as vendas que os vendedores estão vendendo, criar gráficos informativos como (VENDA HOJE E VALOR QUE O ADMIN VAI REPASSAR).
+
+2° Painel (Vendedor) - BOTÃO DE FICAR ONLINE OU OFFLINE, ao ficar ONLINE ELE PODE RECEBER NOTIFICAÇÕES E VAI MOSTRAR PARA O CLIENTE E MOTORISTA O STATUS DE LOJA ABERTA OU FECHADA.
+
+A)-Dashboard - Vai mostrar todos os dados necessários que devem existir.
+B)- CHAT - Tem que funcionar igual ao whatsapp, Com a lista de contatos, o ícone circulo da foto e nome, O ícone tem que ter efeitos visuais, com bordas vende se tiver online, Borda cinza se tiver offline,
+Com duas Diferenças ao clicar em (CLIENTE, MOTORISTA), 
+(1 - CLIENTE - Ao clicar vai abrir o chat igual do whatsapp, Com botão de chamada de video, ligação, enviar mensagem de áudio e texto, e um grampo para (abrir Camera, galeria, Produtos: Para enviar dentro do chat) ao enviar o produto dentro do chat para o cliente vai mostrar em caixa o Nome do Produto e o Valor e o símbolo de + para o cliente adicionar a quantidade: Exemplo se o produto for 60 R$ e o cliente adicionar 2 vai mostrar 120 R$ e o botão de realizar o pagamento que ao clicar vai abrir o QR code e o valor total, Vai mostrar na tela de ambos (Aguardando Pagamento.., Se o pagamento For aceito - Pagamento Efetuado com Sucesso e o valor total pago), (2- MOTORISTA Ao clicar vai abrir o chat igual do whatsapp, Com botão de chamada de video, ligação, enviar mensagem de áudio e texto, e um grampo para (abrir Camera, galeria: Para enviar dentro do chat)
+C) - PRODUTOS - O vendedor Vai Criar o Produto com Nome do Produto, Descrição e o Valor em R$, esse produto cadastrado vai ser reconhecido automaticamente para quando vendedor com cliente dentro do chat.
+D) - RELATORIOS - Todas vendas Realizadas será organizadas com gráficos e filtrar por tempo, (Valor Total, Valor Taxa admin, Valor Motorista, Valor Sobrado subtraindo a Taxa admin e Taxa Motorista, Valor Repassado Pelo admin). 
+E) - CODIGO DE CONVITES - O vendedor vai gerar o Código Aleatorio para (CLIENTE, Motorista), para quando o usuário for cadastrar, vai reconhecer automaticamente se é CLIENTE OU MOTORISTA,  esse código vai inserir no painel Inicial (Inserir Código), Quando inserir todos os dados ele vai ter acesso ao painel correspondente.
+F) - RECEBIMENTOS - o Vendedor vai inserir o Endereço de Recebimento e salvar, Vai mostrar logo a baixo em as informações de confirmações de recebimento que o vendedor repassou, com valores e data. 
+G) - TAXA MOTORISTA - O vendedor vai selecionar para cada Motorista com 2 opções ( taxa fixa por entrega e % Da venda), se quiser pode selecionar os somente 1 ou os 2, que vai já separar a comissão do motorista sobre o produto para cada motorista que aceitar o pedido. 
+
+3° Painel Cliente - 
+
+A) CHAT - Tem que funcionar igual ao whatsapp, Com a lista de contatos de vendedores, o ícone circulo da foto e nome, O ícone tem que ter efeitos visuais, com bordas verde se tiver online, Borda cinza se tiver offline,
+ao clicar,  Ao clicar vai abrir o chat igual do whatsapp, Com botão de chamada de video, ligação, enviar mensagem de áudio e texto e um grampo para (abrir Camera, galeria, Enviar Localização: Para enviar dentro do chat). QUANDO O VENDEDOR ENVIAR O PRODUTO o cliente vai selecionar a quantidade e vai abrir o QRCODE para realizar o pagamento, no CHAT Aguardando Pagamento.. se confirmar mostra pagamento confirmado) 
+B) - ADICIONAR NOVO VENDEDOR - VAI PEDIR PARA INSERIR O CODIGO QUE O VENDEDOR GERAR, AO ADICIONAR JÁ VAI VINCULAR adicionando.
+C) - PEDIDOS - VAI MOSTRAR 2 INFORMAÇÕES (1- STATUS DO PEDIDO, SE O PAGAMENTO FOR APROVADO, VAI MOSTRAR PARABENS RECEBEMOS SEU PAGAMENTO, QUANDO O MOTORISTA ACEITAR O PEDIDO, VAI MOSTRAR MOTORISTA ACEITOU SEU PEDIDO, E VAI ABRIR UM CHAT TEMPORARIO ENTRE O CLIENTE E O MOTORISTA, Ao clicar vai abrir o chat igual do whatsapp, Com botão de chamada de video, ligação, enviar mensagem de áudio e texto e enviar a Localização, quando o motorista entregar o pedido vai mostrar pedido entregue com sucesso, e o chat entre cliente e motorista some automaticamente junto com as informações STATUS DO PEDIDO).
+
+4° PAINEL MOTORISTA -
+
+A) BOTÃO DE FICAR ONLINE E OFFLINE - SE FICAR ONLINE ELE VAI RECEBER NOTIFICAÇÃO DE SOLICITAÇÃO PARA ACEITAR O PEDIDO E CHAT DE MENSAGENS. 
+B) CHAT - VAI MOSTRAR O CONTATO DO VENDEDOR Tem que funcionar igual ao whatsapp, Com a lista de contatos, o ícone circulo da foto e nome, O ícone tem que ter efeitos visuais, com bordas vende se tiver online, Borda cinza se tiver offline, Com duas Diferenças SEPARADAS ao clicar em (VENDEDOR, CLIENTE), (1° Vendedor vai ficar sempre salvo, ao clicar vai abrir o chat Ao clicar vai abrir o chat igual do whatsapp, Com botão de chamada de video, ligação, enviar mensagem de áudio e texto), (2° CLIENTE - Esse é temporário, só aparece quando o motorista aceitar a corrida vai abrir o chat entre motorista e cliente, vai ter o botão para o Motorista Confirmar a Entrega do Produto, o contato ENTRE MOTORISTA E CLIENTE DESAPARECE). 
+C) RELATORIOS - Vai mostrar a informação da comissão do Motorista de acordo que o vendedor inseriu, quando o motorista Confirmar a Entrega do Produto VAI APARECER a comissão dele conforme, com todos relatórios e filtros necessários (COMISSÃO POR DATA, VALOR A RECEBER, VALOR PAGO PELO VENDEDOR).
+_____________________________________________________________________________________
+
+CRIAÇÃO DE CONTA - APÓS INSERIR O CODIGO DE CONVITE
+
+1° ADMIN - VAI CLICAR EM ACESSAR CONTA, NOME DE USUARIO E PIN.
+2° VENDEDOR -INSERIR FOTO, NOME DA LOJA, N° WHATSAPP, NOME DE USUARIO - APÓS CLICAR EM CONTINUAR VAI PEDIR PARA ELE REGISTRAR A SENHA POR PIN (IGUAL AO PADRÃO DE DESBLOQUEIO DO IPHONE E CONFIRMAR 2 VEZES), APÓS ISSO É CRIADO A CONTA, ONDE AGORA ELE VAI CLICAR EM ACESSAR CONTA, VAI COLOCAR O NOME DE USUARIO, E VAI PEDIR O PIN).
+3° CLIENTE - CADASTRAR RECONHECIMENTO FACIAL, CRIAR NOME DE USUARIO, N° WHATSAPP), APÓS ISSO É CRIADO A CONTA, ONDE AGORA ELE VAI CLICAR EM ACESSAR CONTA, VAI COLOCAR O NOME DE USUARIO, E VAI ABRIR O RECONHECIMENTO FACIAL).
+4° MOTORISTA - INSERIR FOTO, NOME , N° WHATSAPP, NOME DE USUARIO - APÓS CLICAR EM CONTINUAR VAI PEDIR PARA ELE REGISTRAR A SENHA POR PIN (IGUAL AO PADRÃO DE DESBLOQUEIO DO IPHONE E CONFIRMAR 2 VEZES), APÓS ISSO É CRIADO A CONTA, ONDE AGORA ELE VAI CLICAR EM ACESSAR CONTA, VAI COLOCAR O NOME DE USUARIO, E VAI PEDIR O PIN).
+
+
+
+
+
+
+
+
+
+
+

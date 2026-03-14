@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0055ff"/>
+      <stop offset="100%" stop-color="#0033cc"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="neon">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="strongNeon">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background (full bleed for maskable) -->
+  <rect width="512" height="512" rx="0" fill="#00f0ff"/>
+  
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f0ff"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  
+  <rect width="512" height="512" rx="76" fill="url(#bg)"/>
+  
+  <!-- Outer ring glow -->
+  <circle cx="256" cy="210" r="135" fill="none" stroke="#00f0ff" stroke-width="3" opacity="0.15" filter="url(#glow)"/>
+  
+  <!-- Neon circle -->
+  <circle cx="256" cy="210" r="120" fill="none" stroke="#00f0ff" stroke-width="4" filter="url(#neon)"/>
+  
+  <!-- Inner glow circle -->
+  <circle cx="256" cy="210" r="110" fill="none" stroke="#00f0ff" stroke-width="1" opacity="0.25"/>
+  
+  <!-- Lightning bolt with strong glow -->
+  <g filter="url(#strongNeon)">
+    <polygon points="245,145 295,145 265,200 315,200 225,310 253,220 210,220" fill="#ffffff"/>
+  </g>
+  
+  <!-- NEON text -->
+  <text x="256" y="395" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="64" font-weight="800" fill="#ffffff" filter="url(#neon)" letter-spacing="4">NEON</text>
+  
+  <!-- DELIVERY text -->
+  <text x="256" y="450" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="34" font-weight="600" fill="#ffffff" letter-spacing="6" opacity="0.9">DELIVERY</text>
+  
+  <!-- Corner accents -->
+  <g opacity="0.5" stroke-width="2">
+    <line x1="38" y1="58" x2="62" y2="58" stroke="#00f0ff"/>
+    <line x1="38" y1="58" x2="38" y2="82" stroke="#00f0ff"/>
+    <line x1="450" y1="58" x2="474" y2="58" stroke="#8b5cf6"/>
+    <line x1="474" y1="58" x2="474" y2="82" stroke="#8b5cf6"/>
+    <line x1="38" y1="454" x2="38" y2="430" stroke="#8b5cf6"/>
+    <line x1="38" y1="454" x2="62" y2="454" stroke="#8b5cf6"/>
+    <line x1="474" y1="454" x2="474" y2="430" stroke="#00f0ff"/>
+    <line x1="450" y1="454" x2="474" y2="454" stroke="#00f0ff"/>
+  </g>
+  
+  <!-- Subtle grid lines -->
+  <g opacity="0.04" stroke="#00f0ff" stroke-width="0.5">
+    <line x1="0" y1="128" x2="512" y2="128"/>
+    <line x1="0" y1="256" x2="512" y2="256"/>
+    <line x1="0" y1="384" x2="512" y2="384"/>
+    <line x1="128" y1="0" x2="128" y2="512"/>
+    <line x1="256" y1="0" x2="256" y2="512"/>
+    <line x1="384" y1="0" x2="384" y2="512"/>
+  </g>
+</svg>
