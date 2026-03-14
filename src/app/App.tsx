@@ -5,18 +5,13 @@ import { AnimatePresence } from "motion/react";
 import * as api from "./services/api";
 import {
   registerServiceWorker,
-  setupInstallPrompt,
   generateAndCacheIcons,
-  requestNotificationPermission,
   registerPeriodicSync,
   isStandalone,
-  checkPermissions,
   registerPushSubscription,
   getPlatform,
 } from "./services/pwa";
 import {
-  PWAInstallBanner,
-  PWAMiniInstallButton,
   PermissionsModal,
   OnlineStatus,
   PWAUpdateBanner,
@@ -129,16 +124,7 @@ export default function App() {
         console.log("[PWA] Service Worker nao registrado — push nao disponivel");
       }
 
-      // 8. Setup install prompt callback (listener already exists from module load)
-      setupInstallPrompt((canInstall) => {
-        console.log(
-          canInstall
-            ? "[PWA] App pode ser instalado!"
-            : "[PWA] App ja instalado"
-        );
-      });
-
-      // 9. Show permissions modal on first visit
+      // 8. Show permissions modal on first visit
       const permAsked = localStorage.getItem("pwa-permissions-asked");
       if (!permAsked) {
         setTimeout(() => {
@@ -147,7 +133,7 @@ export default function App() {
         }, 5000);
       }
 
-      // 10. Log standalone mode
+      // 9. Log standalone mode
       if (isStandalone()) {
         console.log("[PWA] Rodando em modo standalone (PWA instalado!)");
         document.documentElement.classList.add("pwa-standalone");
@@ -168,8 +154,6 @@ export default function App() {
       <RouterProvider router={router} />
 
       {/* PWA Components */}
-      <PWAInstallBanner />
-      <PWAMiniInstallButton />
       <OnlineStatus />
       <PWAUpdateBanner />
       <PermissionsModal

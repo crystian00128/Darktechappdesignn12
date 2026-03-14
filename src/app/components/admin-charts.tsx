@@ -44,9 +44,10 @@ function PeriodFilter({ selected, onChange, color = "#00f0ff" }: {
 // ── Custom Tooltip ──
 function NeonTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
+  const displayLabel = payload[0]?.payload?.displayLabel || payload[0]?.payload?.label || label;
   return (
     <div className="bg-[#0c0c14]/95 backdrop-blur-xl border border-[#1f1f2e] rounded-xl p-3 shadow-[0_0_20px_rgba(0,240,255,0.15)]">
-      <p className="text-gray-400 text-xs mb-1.5 font-medium">{label}</p>
+      <p className="text-gray-400 text-xs mb-1.5 font-medium">{displayLabel}</p>
       {payload.map((entry: any, i: number) => (
         <div key={i} className="flex items-center gap-2 text-xs">
           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
@@ -148,33 +149,46 @@ export function AdminDashboardCharts() {
     total: [45, 78, 32, 95, 120, 55, 88][i] || 0,
   }));
 
+  // Ensure unique keys for XAxis by adding idx field
+  const chartDailySalesWithIdx = chartDailySales.map((d: any, i: number) => ({
+    ...d,
+    idx: `d${i}`,
+    displayLabel: d.label || `d${i}`,
+  }));
+
   return (
     <div className="space-y-4">
+      {/* Hidden SVG for gradient definitions - outside Recharts to avoid duplicate key warnings */}
+      <svg width={0} height={0} style={{ position: "absolute" }}>
+        <defs>
+          <linearGradient id="gradCyan" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#00f0ff" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+      </svg>
+
       {/* Daily Sales Area Chart */}
       <ChartCard title="Vendas - Ultimos 7 Dias" icon={<TrendingUp className="w-4 h-4" />} color="#00f0ff">
         <div className="h-[200px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartDailySales} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradCyan" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#00f0ff" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-              <XAxis dataKey="label" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} />
-              <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
-              <Tooltip content={<NeonTooltip />} />
-              <Area
-                type="monotone"
-                dataKey="total"
-                name="Vendas"
-                stroke="#00f0ff"
-                strokeWidth={2}
-                fill="url(#gradCyan)"
-                dot={{ fill: "#00f0ff", strokeWidth: 0, r: 3 }}
-                activeDot={{ r: 5, fill: "#00f0ff", stroke: "#050508", strokeWidth: 2 }}
-              />
+            <AreaChart data={chartDailySalesWithIdx} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+               <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#1f1f2e" />
+               <XAxis key="xaxis" dataKey="idx" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} tickFormatter={(v: string) => chartDailySalesWithIdx.find((d: any) => d.idx === v)?.displayLabel || v} />
+               <YAxis key="yaxis" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
+               <Tooltip key="tooltip" content={<NeonTooltip />} />
+               <Area
+                 key="area-total"
+                 type="monotone"
+                 dataKey="total"
+                 name="Vendas"
+                 stroke="#00f0ff"
+                 strokeWidth={2}
+                 fill="url(#gradCyan)"
+                 dot={{ fill: "#00f0ff", strokeWidth: 0, r: 3 }}
+                 activeDot={{ r: 5, fill: "#00f0ff", stroke: "#050508", strokeWidth: 2 }}
+                 isAnimationActive={false}
+               />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -190,21 +204,22 @@ export function AdminDashboardCharts() {
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={vendorBreakdown} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fill: "#666", fontSize: 9 }}
-                    axisLine={{ stroke: "#1f1f2e" }}
-                    tickLine={false}
-                    interval={0}
-                    angle={-20}
-                    textAnchor="end"
-                    height={40}
-                  />
-                  <YAxis tick={{ fill: "#666", fontSize: 9 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<NeonTooltip />} />
-                  <Bar dataKey="totalSales" name="Vendas" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  <Bar dataKey="adminTax" name="Taxa Admin" fill="#00f0ff" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                   <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#1f1f2e" />
+                   <XAxis
+                     key="xaxis"
+                     dataKey="name"
+                     tick={{ fill: "#666", fontSize: 9 }}
+                     axisLine={{ stroke: "#1f1f2e" }}
+                     tickLine={false}
+                     interval={0}
+                     angle={-20}
+                     textAnchor="end"
+                     height={40}
+                   />
+                   <YAxis key="yaxis" tick={{ fill: "#666", fontSize: 9 }} axisLine={false} tickLine={false} />
+                   <Tooltip key="tooltip" content={<NeonTooltip />} />
+                   <Bar key="bar-sales" dataKey="totalSales" name="Vendas" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+                   <Bar key="bar-tax" dataKey="adminTax" name="Taxa Admin" fill="#00f0ff" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -224,27 +239,19 @@ export function AdminDashboardCharts() {
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie
-                    data={commissionPie}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={75}
-                    paddingAngle={3}
-                    dataKey="value"
-                    strokeWidth={0}
-                  >
-                    {commissionPie.map((entry: any, index: number) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<PieTooltip />} />
-                  <Legend
-                    formatter={(value: string) => <span className="text-gray-400 text-[10px]">{value}</span>}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ paddingTop: 8, fontSize: 10 }}
-                  />
+                   <Pie key="pie-comm" data={commissionPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0} isAnimationActive={false}>
+                     {commissionPie.map((entry: any, index: number) => (
+                       <Cell key={`cell-${index}`} fill={entry.color} />
+                     ))}
+                   </Pie>
+                   <Tooltip key="pie-tooltip" content={<PieTooltip />} />
+                   <Legend
+                     key="pie-legend"
+                     formatter={(value: string) => <span className="text-gray-400 text-[10px]">{value}</span>}
+                     iconType="circle"
+                     iconSize={8}
+                     wrapperStyle={{ paddingTop: 8, fontSize: 10 }}
+                   />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -300,6 +307,13 @@ export function AdminFaturamentoCharts() {
   const { vendorBreakdown, dailySales, totals, commissionPie } = data;
   const vendorRanking = [...vendorBreakdown].sort((a: any, b: any) => b.totalSales - a.totalSales);
 
+  // Ensure unique keys for Faturamento daily sales
+  const dailySalesWithIdx = dailySales.map((d: any, i: number) => ({
+    ...d,
+    idx: `f${i}`,
+    displayLabel: d.label || `f${i}`,
+  }));
+
   return (
     <div className="space-y-4">
       {/* Period Filter + KPIs */}
@@ -346,22 +360,26 @@ export function AdminFaturamentoCharts() {
 
       {/* Revenue Trend */}
       <ChartCard title={`Tendencia de Receita (${period} dias)`} icon={<TrendingUp className="w-4 h-4" />} color="#00f0ff">
+        {/* Hidden SVG for gradient - outside Recharts */}
+        <svg width={0} height={0} style={{ position: "absolute" }}>
+          <defs>
+            <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="#00f0ff" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+        </svg>
         <div className="h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={dailySales} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#00f0ff" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-              <XAxis dataKey="label" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} />
-              <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
-              <Tooltip content={<NeonTooltip />} />
-              <Area type="monotone" dataKey="total" name="Receita" stroke="#00f0ff" strokeWidth={2.5} fill="url(#gradRevenue)"
+            <AreaChart data={dailySalesWithIdx} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+              <CartesianGrid key="fat-grid" strokeDasharray="3 3" stroke="#1f1f2e" />
+              <XAxis key="fat-xaxis" dataKey="idx" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} tickFormatter={(v: string) => dailySalesWithIdx.find((d: any) => d.idx === v)?.displayLabel || v} />
+              <YAxis key="fat-yaxis" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
+              <Tooltip key="fat-tooltip" content={<NeonTooltip />} />
+              <Area key="fat-area" type="monotone" dataKey="total" name="Receita" stroke="#00f0ff" strokeWidth={2.5} fill="url(#gradRevenue)"
                 dot={{ fill: "#00f0ff", strokeWidth: 0, r: 4 }}
                 activeDot={{ r: 6, fill: "#00f0ff", stroke: "#050508", strokeWidth: 2 }}
+                isAnimationActive={false}
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -375,13 +393,13 @@ export function AdminFaturamentoCharts() {
             <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={vendorBreakdown} margin={{ top: 5, right: 5, left: -15, bottom: 0 }} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#666", fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
-                  <YAxis dataKey="name" type="category" tick={{ fill: "#aaa", fontSize: 10 }} axisLine={false} tickLine={false} width={70} />
-                  <Tooltip content={<NeonTooltip />} />
-                  <Bar dataKey="vendorNet" name="Liquido" fill="#00ff41" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" />
-                  <Bar dataKey="adminTax" name="Taxa Admin" fill="#00f0ff" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" />
-                  <Bar dataKey="fixedFees" name="Taxa Fixa" fill="#8b5cf6" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" />
+                  <CartesianGrid key="vb-grid" strokeDasharray="3 3" stroke="#1f1f2e" horizontal={false} />
+                  <XAxis key="vb-xaxis" type="number" tick={{ fill: "#666", fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
+                  <YAxis key="vb-yaxis" dataKey="name" type="category" tick={{ fill: "#aaa", fontSize: 10 }} axisLine={false} tickLine={false} width={70} />
+                  <Tooltip key="vb-tooltip" content={<NeonTooltip />} />
+                  <Bar key="vb-net" dataKey="vendorNet" name="Liquido" fill="#00ff41" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" isAnimationActive={false} />
+                  <Bar key="vb-tax" dataKey="adminTax" name="Taxa Admin" fill="#00f0ff" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" isAnimationActive={false} />
+                  <Bar key="vb-fixed" dataKey="fixedFees" name="Taxa Fixa" fill="#8b5cf6" radius={[0, 4, 4, 0]} maxBarSize={20} stackId="a" isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -398,18 +416,19 @@ export function AdminFaturamentoCharts() {
             <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={commissionPie} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={3} dataKey="value" strokeWidth={0}>
-                    {commissionPie.map((entry: any, index: number) => (
-                      <Cell key={`cell-fat-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<PieTooltip />} />
-                  <Legend
-                    formatter={(value: string) => <span className="text-gray-400 text-[10px]">{value}</span>}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ paddingTop: 8, fontSize: 10 }}
-                  />
+                   <Pie key="pie-comm" data={commissionPie} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={3} dataKey="value" strokeWidth={0} isAnimationActive={false}>
+                     {commissionPie.map((entry: any, index: number) => (
+                       <Cell key={`cell-fat-${index}`} fill={entry.color} />
+                     ))}
+                   </Pie>
+                   <Tooltip key="pie-tooltip" content={<PieTooltip />} />
+                   <Legend
+                     key="pie-legend"
+                     formatter={(value: string) => <span className="text-gray-400 text-[10px]">{value}</span>}
+                     iconType="circle"
+                     iconSize={8}
+                     wrapperStyle={{ paddingTop: 8, fontSize: 10 }}
+                   />
                 </PieChart>
               </ResponsiveContainer>
             </div>
