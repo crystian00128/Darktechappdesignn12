@@ -51,22 +51,43 @@ export default function App() {
 
     // ═══ PWA INITIALIZATION ═══
     const initPWA = async () => {
-      console.log("[PWA] Inicializando PWA v4...");
+      console.log("[PWA] Inicializando PWA v5 (Samsung-safe)...");
       const platform = getPlatform();
       console.log("[PWA] Plataforma:", platform);
 
-      // 1. Generate icons and apple-touch-icon (static manifest.json is preserved)
+      // 1. Register Service Worker FIRST — so it can intercept /icons/*.png
+      // for the manifest before the browser fetches them
+      const registration = await registerServiceWorker();
+
+      if (registration) {
+        console.log("[PWA] Service Worker v5 registrado");
+
+        // Wait for SW to be controlling the page (needed for icon intercepts)
+        if (!navigator.serviceWorker.controller) {
+          console.log("[PWA] Waiting for SW to claim control...");
+          await new Promise<void>((resolve) => {
+            navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true });
+            // Timeout after 3s in case it's already controlling
+            setTimeout(resolve, 3000);
+          });
+        }
+
+        // 2. Ask SW to generate and cache PNG icons
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({ type: 'REGENERATE_ICONS' });
+          // Give it a moment to generate
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+
+      // 3. Generate favicon + apple-touch-icon + ensure static manifest link
       generateAndCacheIcons();
 
-      // 2. Add all PWA meta tags
+      // 4. Add all PWA meta tags
       addPWAMetaTags();
 
-      // 3. Register Service Worker (FIXED: removed strict content-type check)
-      const registration = await registerServiceWorker();
       if (registration) {
-        console.log("[PWA] Service Worker v4 registrado");
-
-        // 4. Auto-register push for logged-in user with retry
+        // 5. Auto-register push for logged-in user with retry
         setTimeout(async () => {
           const currentUser = localStorage.getItem("currentUser");
           if (currentUser) {
@@ -94,10 +115,10 @@ export default function App() {
           }
         }, 3000);
 
-        // 5. Register periodic sync
+        // 6. Register periodic sync
         await registerPeriodicSync("check-notifications", 15 * 60 * 1000);
 
-        // 6. Pre-cache app routes via SW
+        // 7. Pre-cache app routes via SW
         if (navigator.serviceWorker.controller) {
           navigator.serviceWorker.controller.postMessage({
             type: 'CACHE_URLS',
@@ -108,7 +129,7 @@ export default function App() {
         console.log("[PWA] Service Worker nao registrado — push nao disponivel");
       }
 
-      // 7. Setup install prompt callback (listener already exists from module load)
+      // 8. Setup install prompt callback (listener already exists from module load)
       setupInstallPrompt((canInstall) => {
         console.log(
           canInstall
@@ -117,7 +138,7 @@ export default function App() {
         );
       });
 
-      // 8. Show permissions modal on first visit
+      // 9. Show permissions modal on first visit
       const permAsked = localStorage.getItem("pwa-permissions-asked");
       if (!permAsked) {
         setTimeout(() => {
@@ -126,7 +147,7 @@ export default function App() {
         }, 5000);
       }
 
-      // 9. Log standalone mode
+      // 10. Log standalone mode
       if (isStandalone()) {
         console.log("[PWA] Rodando em modo standalone (PWA instalado!)");
         document.documentElement.classList.add("pwa-standalone");

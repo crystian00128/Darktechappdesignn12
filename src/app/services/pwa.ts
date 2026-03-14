@@ -711,11 +711,12 @@ export function generateSplashScreen(width: number, height: number): string {
   return canvas.toDataURL('image/png');
 }
 
-// ═══ SETUP ICONS AND META (WITH dynamic manifest for PNG icons) ═══
-// Chrome Android REQUIRES PNG icons (192x192 and 512x512) in the manifest
-// to fire beforeinstallprompt. SVG-only manifests are NOT sufficient.
-// We generate PNG icons via Canvas and create a dynamic manifest blob
-// that includes them as data URLs. This MUST run before SW registration.
+// ═══ SETUP ICONS AND META (Samsung-safe: static manifest + SW-served PNGs) ═══
+// FIXED: We NO LONGER create blob: URL manifests or data: URL icons in the manifest.
+// Samsung Knox/One UI Security blocks blob: and data: origins as "unknown sources".
+// Instead: manifest.json is static, and the Service Worker intercepts /icons/*.png
+// requests and serves OffscreenCanvas-generated PNGs from cache.
+// This function only handles favicon + apple-touch-icon (head tags, not manifest).
 
 export function generateAndCacheIcons() {
   // Favicon
@@ -755,127 +756,28 @@ export function generateAndCacheIcons() {
     }
   });
 
-  // ═══ CRITICAL: Generate dynamic manifest with PNG data URL icons ═══
-  // Chrome Android will NOT fire beforeinstallprompt unless the manifest
-  // contains real PNG icons (not SVG). We generate them via Canvas and
-  // create a blob manifest that Chrome can validate.
-  try {
-    const icon192 = generateIcon(192);
-    const icon512 = generateIcon(512);
-
-    const dynamicManifest = {
-      id: "/",
-      name: "NeonDelivery - Sistema de Delivery",
-      short_name: "NeonDelivery",
-      description: "Sistema completo de delivery com design dark tech futurista. Pedidos, chat, pagamentos PIX e rastreamento em tempo real.",
-      start_url: "/?source=pwa",
-      scope: "/",
-      display: "standalone",
-      display_override: ["standalone", "minimal-ui"],
-      orientation: "portrait",
-      theme_color: "#00f0ff",
-      background_color: "#0a0a0f",
-      categories: ["business", "food", "shopping", "lifestyle"],
-      lang: "pt-BR",
-      dir: "ltr",
-      prefer_related_applications: false,
-      icons: [
-        {
-          src: icon192,
-          sizes: "192x192",
-          type: "image/png",
-          purpose: "any"
-        },
-        {
-          src: icon512,
-          sizes: "512x512",
-          type: "image/png",
-          purpose: "any"
-        },
-        {
-          src: icon192,
-          sizes: "192x192",
-          type: "image/png",
-          purpose: "maskable"
-        },
-        {
-          src: icon512,
-          sizes: "512x512",
-          type: "image/png",
-          purpose: "maskable"
-        },
-        {
-          src: "/icons/icon.svg",
-          sizes: "any",
-          type: "image/svg+xml",
-          purpose: "any"
-        }
-      ],
-      screenshots: [
-        {
-          src: icon512,
-          sizes: "512x512",
-          type: "image/png",
-          form_factor: "narrow",
-          label: "Tela inicial do NeonDelivery"
-        },
-        {
-          src: icon512,
-          sizes: "512x512",
-          type: "image/png",
-          form_factor: "wide",
-          label: "Dashboard NeonDelivery"
-        }
-      ],
-      shortcuts: [
-        {
-          name: "Login",
-          short_name: "Login",
-          url: "/?source=shortcut",
-          icons: [{ src: icon192, sizes: "192x192", type: "image/png" }]
-        }
-      ],
-      launch_handler: {
-        client_mode: "navigate-existing"
-      },
-      edge_side_panel: {
-        preferred_width: 400
-      }
-    };
-
-    const manifestBlob = new Blob(
-      [JSON.stringify(dynamicManifest)],
-      { type: 'application/json' }
-    );
-    const manifestUrl = URL.createObjectURL(manifestBlob);
-
-    // Replace or create manifest link with blob URL containing PNG icons
-    let manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    if (manifestLink) {
-      // Revoke old blob URL if it was one
-      if (manifestLink.href.startsWith('blob:')) {
-        URL.revokeObjectURL(manifestLink.href);
-      }
-      manifestLink.href = manifestUrl;
-    } else {
-      manifestLink = document.createElement('link');
-      manifestLink.rel = 'manifest';
-      manifestLink.href = manifestUrl;
-      document.head.appendChild(manifestLink);
-    }
-
-    console.log('[PWA] ✅ Dynamic manifest created with PNG icons (192x192 + 512x512)');
-    console.log('[PWA] Manifest blob URL:', manifestUrl.substring(0, 40) + '...');
-  } catch (e) {
-    console.error('[PWA] Failed to create dynamic manifest, falling back to static:', e);
-    // Fallback: ensure static manifest link exists
-    let manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    if (!manifestLink) {
-      manifestLink = document.createElement('link');
-      manifestLink.rel = 'manifest';
+  // ═══ ENSURE STATIC MANIFEST LINK EXISTS (no blob: URLs!) ═══
+  let manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+  if (manifestLink) {
+    // If it was previously a blob URL, revert to static
+    if (manifestLink.href.startsWith('blob:')) {
+      URL.revokeObjectURL(manifestLink.href);
       manifestLink.href = '/manifest.json';
-      document.head.appendChild(manifestLink);
+      console.log('[PWA] Reverted blob manifest to static /manifest.json');
     }
+  } else {
+    manifestLink = document.createElement('link');
+    manifestLink.rel = 'manifest';
+    manifestLink.href = '/manifest.json';
+    document.head.appendChild(manifestLink);
+  }
+
+  console.log('[PWA] ✅ Icons configured (favicon + apple-touch-icon). Manifest: static /manifest.json');
+  console.log('[PWA] PNG icons for manifest are served by Service Worker from cache');
+
+  // Ask SW to ensure icons are generated and cached
+  if (navigator.serviceWorker?.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'REGENERATE_ICONS' });
   }
 
   // iOS Splash screens

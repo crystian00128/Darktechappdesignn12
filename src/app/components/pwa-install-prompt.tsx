@@ -352,6 +352,7 @@ function IOSInstallGuide({
   browser: string;
 }) {
   const isIOS = platform === "ios";
+  const isSamsung = browser === "samsung";
 
   const steps = isIOS
     ? [
@@ -370,6 +371,33 @@ function IOSInstallGuide({
         {
           icon: <CheckCircle2 className="w-6 h-6 text-green-400" />,
           title: 'Toque em "Adicionar"',
+          desc: "O app aparecera na sua tela inicial como um aplicativo nativo!",
+          highlight: false,
+        },
+      ]
+    : isSamsung
+    ? [
+        {
+          icon: <MonitorSmartphone className="w-6 h-6 text-cyan-400" />,
+          title: "Samsung Internet",
+          desc: "Use o Chrome para melhor compatibilidade, ou siga os passos abaixo",
+          highlight: true,
+        },
+        {
+          icon: <ExternalLink className="w-6 h-6 text-purple-400" />,
+          title: 'Menu > "Adicionar a tela inicial"',
+          desc: 'Toque no menu (≡) embaixo a direita e selecione "Adicionar pagina a" > "Tela inicial"',
+          highlight: false,
+        },
+        {
+          icon: <Shield className="w-6 h-6 text-yellow-400" />,
+          title: "Seguranca Samsung",
+          desc: 'Se aparecer alerta de seguranca, toque "Instalar mesmo assim". O app e 100% seguro (PWA web)',
+          highlight: false,
+        },
+        {
+          icon: <CheckCircle2 className="w-6 h-6 text-green-400" />,
+          title: "Pronto!",
           desc: "O app aparecera na sua tela inicial como um aplicativo nativo!",
           highlight: false,
         },
