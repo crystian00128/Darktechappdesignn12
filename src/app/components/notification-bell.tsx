@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Bell, X, MessageSquare, ShoppingBag, CreditCard, Phone, Check, Trash2, Code, UserPlus, Zap } from "lucide-react";
 
@@ -37,6 +38,19 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>(() => loadFromStorage());
   const [flashNew, setFlashNew] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+
+  // Update panel position when open
+  useEffect(() => {
+    if (open && bellRef.current) {
+      const rect = bellRef.current.getBoundingClientRect();
+      setPanelPos({
+        top: rect.bottom + 8,
+        right: window.innerWidth - rect.right,
+      });
+    }
+  }, [open]);
 
   // Persist to localStorage whenever notifications change
   const persistNotifications = useCallback((updater: (prev: Notification[]) => Notification[]) => {
@@ -99,7 +113,10 @@ export function NotificationBell() {
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        bellRef.current && !bellRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     };
@@ -185,8 +202,9 @@ export function NotificationBell() {
   const groups = groupNotifications();
 
   return (
-    <div className="relative" ref={panelRef}>
+    <div className="relative">
       <motion.button
+        ref={bellRef}
         whileTap={{ scale: 0.9 }}
         onClick={() => setOpen(!open)}
         className="relative p-2 rounded-xl bg-[#12121a] border border-[#1f1f2e] hover:border-[#00f0ff]/30 transition-colors"
@@ -215,136 +233,141 @@ export function NotificationBell() {
         )}
       </motion.button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="absolute right-0 top-full mt-2 w-[340px] max-h-[75vh] z-[60] rounded-2xl overflow-hidden"
-          >
-            <div className="bg-[#0c0c14]/98 backdrop-blur-xl border border-[#1f1f2e] rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.5)]">
-              {/* Header */}
-              <div className="flex items-center justify-between p-3 border-b border-[#1f1f2e]">
-                <div className="flex items-center gap-2">
-                  <motion.div
-                    className="p-1.5 rounded-lg bg-[#00f0ff]/10"
-                    animate={{ boxShadow: ["0 0 4px #00f0ff00", "0 0 8px #00f0ff30", "0 0 4px #00f0ff00"] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  >
-                    <Bell className="w-3.5 h-3.5 text-[#00f0ff]" />
-                  </motion.div>
-                  <h3 className="text-white font-bold text-sm">Notificacoes</h3>
-                  {unreadCount > 0 && (
-                    <span className="px-1.5 py-0.5 bg-[#ff006e]/15 text-[#ff006e] rounded-full text-[10px] font-bold">
-                      {unreadCount}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {notifications.length > 0 && (
-                    <>
-                      <button onClick={markAllRead} className="p-1.5 rounded-lg hover:bg-[#00f0ff]/10 text-gray-500 hover:text-[#00f0ff] transition-colors" title="Marcar como lidas">
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={clearAll} className="p-1.5 rounded-lg hover:bg-[#ff006e]/10 text-gray-500 hover:text-[#ff006e] transition-colors" title="Limpar">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                  <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg hover:bg-[#1f1f2e] text-gray-500 hover:text-white transition-colors">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Notifications List */}
-              <div className="max-h-[55vh] overflow-y-auto scrollbar-thin">
-                {notifications.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 px-4">
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              ref={panelRef}
+              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="fixed w-[340px] max-h-[75vh] rounded-2xl overflow-hidden"
+              style={{ top: panelPos.top, right: panelPos.right, zIndex: 99999 }}
+            >
+              <div className="bg-[#0c0c14]/98 backdrop-blur-xl border border-[#1f1f2e] rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.5)]">
+                {/* Header */}
+                <div className="flex items-center justify-between p-3 border-b border-[#1f1f2e]">
+                  <div className="flex items-center gap-2">
                     <motion.div
-                      animate={{ opacity: [0.2, 0.5, 0.2] }}
-                      transition={{ duration: 3, repeat: Infinity }}
+                      className="p-1.5 rounded-lg bg-[#00f0ff]/10"
+                      animate={{ boxShadow: ["0 0 4px #00f0ff00", "0 0 8px #00f0ff30", "0 0 4px #00f0ff00"] }}
+                      transition={{ duration: 2, repeat: Infinity }}
                     >
-                      <Bell className="w-8 h-8 text-gray-700 mb-2" />
+                      <Bell className="w-3.5 h-3.5 text-[#00f0ff]" />
                     </motion.div>
-                    <p className="text-gray-600 text-xs text-center">Nenhuma notificacao</p>
-                    <p className="text-gray-700 text-[10px] text-center mt-1">
-                      Notificacoes aparecerao aqui automaticamente
-                    </p>
+                    <h3 className="text-white font-bold text-sm">Notificacoes</h3>
+                    {unreadCount > 0 && (
+                      <span className="px-1.5 py-0.5 bg-[#ff006e]/15 text-[#ff006e] rounded-full text-[10px] font-bold">
+                        {unreadCount}
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  groups.map((group) => (
-                    <div key={group.label}>
-                      <div className="px-3 py-1.5 bg-[#0a0a12]/60 border-b border-[#1f1f2e]/30 sticky top-0 z-10">
-                        <span className="text-gray-600 text-[10px] font-bold uppercase tracking-widest">{group.label}</span>
-                      </div>
-                      {group.items.map((notif) => (
-                        <motion.div
-                          key={notif.id}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          layout
-                          className={`group flex items-start gap-2.5 p-3 border-b border-[#1f1f2e]/30 hover:bg-[#12121a]/50 transition-colors cursor-pointer ${
-                            !notif.read ? "bg-[#00f0ff]/[0.03]" : ""
-                          }`}
-                          onClick={() => {
-                            persistNotifications((prev) =>
-                              prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
-                            );
-                          }}
-                        >
-                          <div
-                            className="p-1.5 rounded-lg border shrink-0 mt-0.5"
-                            style={{
-                              background: `${getAccentColor(notif.type)}08`,
-                              borderColor: `${getAccentColor(notif.type)}20`,
+                  <div className="flex items-center gap-1">
+                    {notifications.length > 0 && (
+                      <>
+                        <button onClick={markAllRead} className="p-1.5 rounded-lg hover:bg-[#00f0ff]/10 text-gray-500 hover:text-[#00f0ff] transition-colors" title="Marcar como lidas">
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={clearAll} className="p-1.5 rounded-lg hover:bg-[#ff006e]/10 text-gray-500 hover:text-[#ff006e] transition-colors" title="Limpar">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg hover:bg-[#1f1f2e] text-gray-500 hover:text-white transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Notifications List */}
+                <div className="max-h-[55vh] overflow-y-auto scrollbar-thin">
+                  {notifications.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 px-4">
+                      <motion.div
+                        animate={{ opacity: [0.2, 0.5, 0.2] }}
+                        transition={{ duration: 3, repeat: Infinity }}
+                      >
+                        <Bell className="w-8 h-8 text-gray-700 mb-2" />
+                      </motion.div>
+                      <p className="text-gray-600 text-xs text-center">Nenhuma notificacao</p>
+                      <p className="text-gray-700 text-[10px] text-center mt-1">
+                        Notificacoes aparecerao aqui automaticamente
+                      </p>
+                    </div>
+                  ) : (
+                    groups.map((group) => (
+                      <div key={group.label}>
+                        <div className="px-3 py-1.5 bg-[#0a0a12]/60 border-b border-[#1f1f2e]/30 sticky top-0 z-10">
+                          <span className="text-gray-600 text-[10px] font-bold uppercase tracking-widest">{group.label}</span>
+                        </div>
+                        {group.items.map((notif) => (
+                          <motion.div
+                            key={notif.id}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            layout
+                            className={`group flex items-start gap-2.5 p-3 border-b border-[#1f1f2e]/30 hover:bg-[#12121a]/50 transition-colors cursor-pointer ${
+                              !notif.read ? "bg-[#00f0ff]/[0.03]" : ""
+                            }`}
+                            onClick={() => {
+                              persistNotifications((prev) =>
+                                prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
+                              );
                             }}
                           >
-                            {getIcon(notif.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              {!notif.read && (
-                                <motion.div
-                                  className="w-1.5 h-1.5 rounded-full bg-[#00f0ff] shrink-0"
-                                  animate={{ scale: [1, 1.3, 1] }}
-                                  transition={{ duration: 1.5, repeat: Infinity }}
-                                />
-                              )}
-                              <p className="text-white text-xs font-semibold truncate">{notif.title}</p>
-                              <span className="text-gray-700 text-[10px] ml-auto shrink-0">{timeAgo(notif.timestamp)}</span>
+                            <div
+                              className="p-1.5 rounded-lg border shrink-0 mt-0.5"
+                              style={{
+                                background: `${getAccentColor(notif.type)}08`,
+                                borderColor: `${getAccentColor(notif.type)}20`,
+                              }}
+                            >
+                              {getIcon(notif.type)}
                             </div>
-                            <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{notif.body}</p>
-                          </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteOne(notif.id); }}
-                            className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-[#ff006e]/10 text-gray-700 hover:text-[#ff006e] transition-all shrink-0"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </motion.div>
-                      ))}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                {!notif.read && (
+                                  <motion.div
+                                    className="w-1.5 h-1.5 rounded-full bg-[#00f0ff] shrink-0"
+                                    animate={{ scale: [1, 1.3, 1] }}
+                                    transition={{ duration: 1.5, repeat: Infinity }}
+                                  />
+                                )}
+                                <p className="text-white text-xs font-semibold truncate">{notif.title}</p>
+                                <span className="text-gray-700 text-[10px] ml-auto shrink-0">{timeAgo(notif.timestamp)}</span>
+                              </div>
+                              <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{notif.body}</p>
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); deleteOne(notif.id); }}
+                              className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-[#ff006e]/10 text-gray-700 hover:text-[#ff006e] transition-all shrink-0"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </motion.div>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Footer */}
+                {notifications.length > 0 && (
+                  <div className="px-3 py-2 border-t border-[#1f1f2e] flex items-center justify-between">
+                    <span className="text-gray-700 text-[10px]">{notifications.length} notificacao(es)</span>
+                    <div className="flex items-center gap-1">
+                      <Zap className="w-3 h-3 text-gray-700" />
+                      <span className="text-gray-700 text-[10px]">Persistidas localmente</span>
                     </div>
-                  ))
+                  </div>
                 )}
               </div>
-
-              {/* Footer */}
-              {notifications.length > 0 && (
-                <div className="px-3 py-2 border-t border-[#1f1f2e] flex items-center justify-between">
-                  <span className="text-gray-700 text-[10px]">{notifications.length} notificacao(es)</span>
-                  <div className="flex items-center gap-1">
-                    <Zap className="w-3 h-3 text-gray-700" />
-                    <span className="text-gray-700 text-[10px]">Persistidas localmente</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   );
 }

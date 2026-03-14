@@ -49,6 +49,7 @@ import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overl
 import { MotoristaDashboardCharts } from "../components/motorista-charts";
 import { NotificationBell } from "../components/notification-bell";
 import * as notif from "../services/notifications";
+import { PushToggle } from "../components/push-toggle";
 import * as api from "../services/api";
 import * as sfx from "../services/sounds";
 
@@ -808,6 +809,7 @@ export function MotoristaPanel() {
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              <PushToggle username={currentUser.username} accentColor="#ff00ff" compact />
               <NotificationBell />
               <motion.button onClick={() => setShowLogoutConfirm(true)} whileTap={{ scale: 0.9 }} className="p-2 rounded-xl bg-[#ff006e]/10 text-[#ff006e]">
                 <LogOut className="w-4 h-4" />

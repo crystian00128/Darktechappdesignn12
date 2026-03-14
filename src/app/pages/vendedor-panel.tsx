@@ -9,6 +9,7 @@ import { useCallSystem } from "../hooks/useCallSystem";
 import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overlays";
 import { VendedorDashboardCharts } from "../components/vendedor-charts";
 import * as notif from "../services/notifications";
+import { PushToggle } from "../components/push-toggle";
 import {
   LayoutDashboard, MessageSquare, Package, FileText, Ticket, Wallet, Truck,
   DollarSign, ShoppingBag, TrendingUp, Copy, Check, Power, Plus, X, Users,
@@ -1318,6 +1319,7 @@ export function VendedorPanel() {
   // Online/Offline toggle as header action
   const headerAction = (
     <div className="flex items-center gap-2">
+      <PushToggle username={currentUser.username} accentColor="#00f0ff" compact />
       {isOnline && (
         <motion.div animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 2, repeat: Infinity }}
           className="flex items-center gap-1.5 px-2 py-0.5 bg-[#00ff41]/15 rounded-full">

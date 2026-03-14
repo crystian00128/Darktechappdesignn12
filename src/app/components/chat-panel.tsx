@@ -49,6 +49,7 @@ interface ChatPanelProps {
   accentColor?: string;
   groupedContacts?: { label: string; contacts: Contact[]; gradient: string }[];
   onStartCall?: (to: string, type: "voice" | "video", toName: string) => void;
+  autoOpenChat?: string;
 }
 
 const getAvatarText = (text: string | null | undefined): string => {
@@ -80,8 +81,9 @@ export function ChatPanel({
   accentColor = "#00f0ff",
   groupedContacts,
   onStartCall,
+  autoOpenChat,
 }: ChatPanelProps) {
-  const [selectedChat, setSelectedChat] = useState<string | null>(null);
+  const [selectedChat, setSelectedChat] = useState<string | null>(autoOpenChat || null);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);

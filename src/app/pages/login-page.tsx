@@ -208,8 +208,8 @@ export function LoginPage() {
         setTimeout(() => {
           registerPushSubscription(response.user.username).then(success => {
             console.log("[LOGIN] Push registration result:", success);
-            if (!success) {
-              // Retry after 5s
+            if (!success && 'Notification' in window && Notification.permission !== 'denied') {
+              // Retry after 5s only if permission isn't permanently denied
               setTimeout(() => registerPushSubscription(response.user.username), 5000);
             }
           }).catch(e => console.log("Push registration deferred:", e));
@@ -371,7 +371,7 @@ export function LoginPage() {
             // Register push notifications — delay slightly to ensure SW is ready
             setTimeout(() => {
               registerPushSubscription(userData.username).then(s => {
-                if (!s) setTimeout(() => registerPushSubscription(userData.username), 5000);
+                if (!s && 'Notification' in window && Notification.permission !== 'denied') setTimeout(() => registerPushSubscription(userData.username), 5000);
               }).catch(() => {});
             }, 1500);
             navigate(`/${userData.role}`);

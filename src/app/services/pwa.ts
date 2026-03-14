@@ -155,7 +155,31 @@ export function canAutoPrompt(): boolean {
   return ['chrome', 'edge', 'samsung'].includes(browser);
 }
 
-// ═══ PUSH NOTIFICATIONS (FIXED: robust error handling + retry) ═══
+// ═══ PUSH TOGGLE PREFERENCE (localStorage) ═══
+const PUSH_ENABLED_KEY = "push_notifications_enabled";
+
+/**
+ * Check if the user has push notifications enabled via the in-app toggle.
+ * Returns true if never explicitly disabled (default on).
+ */
+export function isPushEnabledForUser(username: string): boolean {
+  try {
+    const stored = localStorage.getItem(`${PUSH_ENABLED_KEY}_${username}`);
+    return stored === null ? true : stored === "true";
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Set the push toggle preference in localStorage.
+ */
+export function setPushEnabledForUser(username: string, enabled: boolean): void {
+  try {
+    localStorage.setItem(`${PUSH_ENABLED_KEY}_${username}`, String(enabled));
+  } catch {}
+}
+
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   if (!('Notification' in window)) {
     console.log('[PWA] Notifications not supported in this browser');
@@ -249,22 +273,45 @@ export async function registerPushSubscription(username: string): Promise<boolea
   console.log(`[PWA] === Starting push registration for: ${username} ===`);
 
   try {
+    // Step 0: Check user's in-app push toggle preference
+    if (!isPushEnabledForUser(username)) {
+      console.log('[PWA] Push skipped: User has push notifications disabled via in-app toggle.');
+      return false;
+    }
+
     // Step 1: Check browser support
     if (!('serviceWorker' in navigator)) {
-      console.error('[PWA] ❌ Step 1 FAIL: ServiceWorker not supported');
+      console.warn('[PWA] Push skipped: ServiceWorker not supported');
       return false;
     }
     if (!('PushManager' in window)) {
-      console.error('[PWA] ❌ Step 1 FAIL: PushManager not supported');
+      console.warn('[PWA] Push skipped: PushManager not supported');
       return false;
     }
     console.log('[PWA] ✅ Step 1: Browser supports SW + Push');
 
-    // Step 2: Request notification permission
-    const permission = await requestNotificationPermission();
-    if (permission !== 'granted') {
-      console.error(`[PWA] ❌ Step 2 FAIL: Notification permission is "${permission}"`);
+    // Step 2: Check notification permission
+    // If permission is "denied", the browser blocks re-requesting.
+    // User must manually re-enable in browser/OS settings.
+    if (!('Notification' in window)) {
+      console.warn('[PWA] Push skipped: Notification API not available');
       return false;
+    }
+
+    const currentPermission = Notification.permission;
+    if (currentPermission === 'denied') {
+      // Silently skip — the PushToggle UI already shows "permission blocked" state
+      console.log('[PWA] Push skipped: Notification permission is "denied". User can re-enable in browser settings.');
+      return false;
+    }
+
+    if (currentPermission !== 'granted') {
+      // Only request if still in "default" (prompt) state
+      const permission = await requestNotificationPermission();
+      if (permission !== 'granted') {
+        console.log(`[PWA] Push skipped: Notification permission not granted ("${permission}").`);
+        return false;
+      }
     }
     console.log('[PWA] ✅ Step 2: Notification permission granted');
 

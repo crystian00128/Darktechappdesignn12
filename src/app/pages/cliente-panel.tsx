@@ -350,13 +350,13 @@ export function ClientePanel() {
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden relative z-10 pb-16">
+      <main className="flex-1 overflow-hidden relative z-10">
         <AnimatePresence mode="wait">
           {/* Chat */}
           {activeTab === "chat" && (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
               {vendedor ? (
-                <ChatPanel currentUsername={currentUser.username} contacts={chatContacts} accentColor="#00f0ff" onStartCall={handleStartCall} />
+                <ChatPanel currentUsername={currentUser.username} contacts={chatContacts} accentColor="#00f0ff" onStartCall={handleStartCall} autoOpenChat={chatContacts.length === 1 ? chatContacts[0].username : undefined} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full p-6">
                   <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center w-full max-w-sm">
@@ -374,7 +374,7 @@ export function ClientePanel() {
 
           {/* Loja */}
           {activeTab === "loja" && (
-            <motion.div key="loja" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4">
+            <motion.div key="loja" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4 h-full overflow-y-auto pb-16">
               <h2 className="text-white font-bold text-lg">
                 {vendedor ? `Loja de ${vendedor.name}` : "Loja"}
               </h2>
@@ -425,7 +425,7 @@ export function ClientePanel() {
 
           {/* Pedidos */}
           {activeTab === "pedidos" && (
-            <motion.div key="pedidos" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4">
+            <motion.div key="pedidos" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4 h-full overflow-y-auto pb-16">
               <div className="flex justify-between items-center">
                 <h2 className="text-white font-bold text-lg">Meus Pedidos</h2>
                 <button onClick={loadOrders} className="px-3 py-1.5 bg-[#1f1f2e] text-[#00f0ff] rounded-lg text-sm font-medium">
@@ -486,7 +486,7 @@ export function ClientePanel() {
 
           {/* Adicionar Vendedor */}
           {activeTab === "adicionar" && (
-            <motion.div key="adicionar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 flex items-center justify-center min-h-[60vh]">
+            <motion.div key="adicionar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 flex items-center justify-center h-full overflow-y-auto pb-16">
               <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-6 w-full max-w-sm">
                 <div className="text-center mb-6">
                   <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] mb-3">
