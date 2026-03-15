@@ -1709,6 +1709,35 @@ app.get("/make-server-42377006/orders/vendor/:username", async (c) => {
   try {
     const username = c.req.param("username");
     const orders = await kv.get(`orders:vendor:${username}`) || [];
+    // Auto-cancel pending_payment orders older than 15 minutes
+    const EXPIRY_MS = 15 * 60 * 1000;
+    let changed = false;
+    for (const order of orders) {
+      if (order.status === "pending_payment" && order.createdAt) {
+        const elapsed = Date.now() - new Date(order.createdAt).getTime();
+        if (elapsed > EXPIRY_MS) {
+          order.status = "cancelled";
+          order.cancelReason = "pix_expired";
+          order.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await kv.set(`orders:vendor:${username}`, orders);
+      for (const order of orders) {
+        if (order.cancelReason === "pix_expired" && order.clientUsername) {
+          const cOrds = await kv.get(`orders:client:${order.clientUsername}`) || [];
+          const ci = cOrds.findIndex((o: any) => o.id === order.id);
+          if (ci !== -1 && cOrds[ci].status === "pending_payment") {
+            cOrds[ci].status = "cancelled";
+            cOrds[ci].cancelReason = "pix_expired";
+            cOrds[ci].updatedAt = order.updatedAt;
+            await kv.set(`orders:client:${order.clientUsername}`, cOrds);
+          }
+        }
+      }
+    }
     return c.json({ success: true, orders });
   } catch (error) {
     return c.json({ success: false, error: String(error) }, 500);
@@ -1719,6 +1748,35 @@ app.get("/make-server-42377006/orders/client/:username", async (c) => {
   try {
     const username = c.req.param("username");
     const orders = await kv.get(`orders:client:${username}`) || [];
+    // Auto-cancel pending_payment orders older than 15 minutes
+    const EXPIRY_MS = 15 * 60 * 1000;
+    let changed = false;
+    for (const order of orders) {
+      if (order.status === "pending_payment" && order.createdAt) {
+        const elapsed = Date.now() - new Date(order.createdAt).getTime();
+        if (elapsed > EXPIRY_MS) {
+          order.status = "cancelled";
+          order.cancelReason = "pix_expired";
+          order.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await kv.set(`orders:client:${username}`, orders);
+      for (const order of orders) {
+        if (order.cancelReason === "pix_expired" && order.vendorUsername) {
+          const vOrds = await kv.get(`orders:vendor:${order.vendorUsername}`) || [];
+          const vi = vOrds.findIndex((o: any) => o.id === order.id);
+          if (vi !== -1 && vOrds[vi].status === "pending_payment") {
+            vOrds[vi].status = "cancelled";
+            vOrds[vi].cancelReason = "pix_expired";
+            vOrds[vi].updatedAt = order.updatedAt;
+            await kv.set(`orders:vendor:${order.vendorUsername}`, vOrds);
+          }
+        }
+      }
+    }
     return c.json({ success: true, orders });
   } catch (error) {
     return c.json({ success: false, error: String(error) }, 500);
@@ -3790,8 +3848,35 @@ app.post("/make-server-42377006/vendor-wallet/withdraw", async (c) => {
           tag: `withdrawal-${withdrawal.id}`,
           data: { url: "/admin", type: "withdrawal_request" },
         });
+        // Server-side in-app notification for admin bell
+        const adminKey = `inapp_notif:admin:${u.value.username}`;
+        const adminNotifs = await kv.get(adminKey) || [];
+        adminNotifs.unshift({
+          id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: "Solicitação de Saque",
+          body: `${user.name || username} solicitou saque de R$ ${amount.toFixed(2)} | PIX: ${pixAddress || "não informado"}`,
+          type: "withdrawal_request",
+          timestamp: new Date().toISOString(),
+          read: false,
+        });
+        if (adminNotifs.length > 50) adminNotifs.length = 50;
+        await kv.set(adminKey, adminNotifs);
       }
     }
+
+    // Server-side in-app notification for vendor bell
+    const vendorNotifKey = `inapp_notif:vendedor:${username}`;
+    const vendorNotifs = await kv.get(vendorNotifKey) || [];
+    vendorNotifs.unshift({
+      id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: "Solicitação de Saque Realizada",
+      body: `Seu saque de R$ ${amount.toFixed(2)} foi solicitado. Aguarde até 24h para transferência.`,
+      type: "withdrawal_request",
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+    if (vendorNotifs.length > 50) vendorNotifs.length = 50;
+    await kv.set(vendorNotifKey, vendorNotifs);
 
     console.log(`✅ Withdrawal request created: R$${amount.toFixed(2)} by ${username}`);
     return c.json({ success: true, withdrawal });
@@ -3853,10 +3938,85 @@ app.post("/make-server-42377006/admin/withdrawal-complete", async (c) => {
       data: { url: "/vendedor", type: "withdrawal_completed" },
     });
 
+    // Server-side in-app notification for vendor bell
+    const vendorNotifKey = `inapp_notif:vendedor:${request.vendorUsername}`;
+    const vendorNotifs = await kv.get(vendorNotifKey) || [];
+    vendorNotifs.unshift({
+      id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: "Saque Concluído!",
+      body: `Sua transferência de R$ ${request.amount.toFixed(2)} foi realizada com sucesso!`,
+      type: "withdrawal_completed",
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+    if (vendorNotifs.length > 50) vendorNotifs.length = 50;
+    await kv.set(vendorNotifKey, vendorNotifs);
+
     console.log(`✅ Withdrawal ${withdrawalId} completed for ${request.vendorUsername}`);
     return c.json({ success: true });
   } catch (error) {
     console.error("Erro ao completar saque:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SERVER-SIDE IN-APP NOTIFICATIONS (bell notifications across users)
+// ═══════════════════════════════════════════════════════════════
+
+// Push a server-side notification for a specific user (role:username)
+app.post("/make-server-42377006/inapp-notifications/push", async (c) => {
+  try {
+    const { targetUser, title, body, type } = await c.req.json();
+    if (!targetUser || !title) return c.json({ success: false, error: "targetUser and title required" }, 400);
+    const key = `inapp_notif:${targetUser}`;
+    const existing = await kv.get(key) || [];
+    const notif = {
+      id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      body: body || "",
+      type: type || "general",
+      timestamp: new Date().toISOString(),
+      read: false,
+    };
+    existing.unshift(notif);
+    if (existing.length > 50) existing.length = 50;
+    await kv.set(key, existing);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Erro ao push inapp notification:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get server-side notifications for a user
+app.get("/make-server-42377006/inapp-notifications/:userKey", async (c) => {
+  try {
+    const userKey = decodeURIComponent(c.req.param("userKey"));
+    const notifs = await kv.get(`inapp_notif:${userKey}`) || [];
+    return c.json({ success: true, notifications: notifs });
+  } catch (error) {
+    console.error("Erro ao get inapp notifications:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Mark server-side notifications as read
+app.post("/make-server-42377006/inapp-notifications/mark-read", async (c) => {
+  try {
+    const { userKey, notificationIds } = await c.req.json();
+    if (!userKey) return c.json({ success: false, error: "userKey required" }, 400);
+    const key = `inapp_notif:${userKey}`;
+    const existing = await kv.get(key) || [];
+    for (const n of existing) {
+      if (!notificationIds || notificationIds.includes(n.id)) {
+        n.read = true;
+      }
+    }
+    await kv.set(key, existing);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Erro ao mark-read inapp notifications:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });

@@ -1328,6 +1328,14 @@ function VendedorCarteira({ currentUsername }: { currentUsername: string }) {
       if (res.success) {
         sfx.playSuccess();
         showToast(`Solicitação de saque de R$ ${amount.toFixed(2)} enviada! Aguarde até 24h para transferência.`, "success");
+        // Vendor in-app notification (local — shows immediately in this window's bell)
+        notif.dispatchNotification({
+          title: "Solicitação de Saque Realizada",
+          body: `Seu saque de R$ ${amount.toFixed(2)} foi solicitado. Aguarde até 24h para transferência.`,
+          type: "withdrawal_request",
+          targetUser: `vendedor:${currentUsername}`,
+        });
+        // Admin receives notification via server-side KV + push (handled by backend)
         setWithdrawAmount("");
         await loadWallet();
       } else {
@@ -1593,6 +1601,49 @@ function VendedorCarteira({ currentUsername }: { currentUsername: string }) {
   );
 }
 
+// ─── PIX Countdown for pending_payment orders (15 min) ─────────────
+function VendorPixCountdown({ createdAt }: { createdAt: string }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const EXPIRY_MS = 15 * 60 * 1000;
+  const elapsed = now - new Date(createdAt).getTime();
+  const remaining = Math.max(0, EXPIRY_MS - elapsed);
+  const mins = Math.floor(remaining / 60000);
+  const secs = Math.floor((remaining % 60000) / 1000);
+  const progress = remaining / EXPIRY_MS;
+  const isUrgent = mins < 3;
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-1.5 bg-[#1f1f2e] rounded-full overflow-hidden">
+          <motion.div className="h-full rounded-full" style={{
+            width: `${progress * 100}%`,
+            background: isUrgent ? "linear-gradient(90deg, #ff006e, #ff9f00)" : "linear-gradient(90deg, #f59e0b80, #f59e0b)",
+          }} />
+        </div>
+        <motion.span
+          className={`text-[10px] font-mono font-bold ${isUrgent ? "text-[#ff006e]" : "text-[#f59e0b]"}`}
+          animate={isUrgent ? { opacity: [1, 0.4, 1] } : {}}
+          transition={{ duration: 1, repeat: Infinity }}
+        >
+          {String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}
+        </motion.span>
+      </div>
+      <div className="flex items-center gap-2 px-2 py-1.5 bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-xl">
+        <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          className="w-3.5 h-3.5 border-2 border-[#f59e0b]/30 border-t-[#f59e0b] rounded-full shrink-0" />
+        <p className="text-[#f59e0b]/80 text-[9px] font-medium">
+          {isUrgent ? "Expirando em breve! " : ""}Aguardando PIX do cliente. Cancela automaticamente ao expirar.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────
 export function VendedorPanel() {
   const navigate = useNavigate();
@@ -1692,6 +1743,15 @@ export function VendedorPanel() {
   useEffect(() => { const i = setInterval(() => { fetchCodes(); loadMyUsers(); loadOrders(); }, 8000); return () => clearInterval(i); }, []);
   useEffect(() => { return () => { if (pixPollingRef.current) clearInterval(pixPollingRef.current); }; }, []);
 
+  // Ticker to force re-render every second (for pending_payment countdown expiry)
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const hasPendingPix = orders.some((o: any) => o.status === "pending_payment");
+    if (!hasPendingPix) return;
+    const t = setInterval(() => setTick((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [orders]);
+
   const loadMyUsers = async () => {
     try { setLoading(true); const r = await api.getUsersCreatedBy(currentUser.username); if (r.success) { const u = r.users || []; setClientes(u.filter((x: any) => x.role === "cliente")); setMotoristas(u.filter((x: any) => x.role === "motorista")); } } catch (e) { console.error(e); } finally { setLoading(false); }
   };
@@ -1725,7 +1785,14 @@ export function VendedorPanel() {
     }
   }, []);
 
-  const pendingOrdersCount = orders.filter((o: any) => o.status === "pending" || o.status === "pending_payment").length;
+  // Filter pending_payment orders — only show if within 15 min window
+  const PIX_EXPIRY_MS = 15 * 60 * 1000;
+  const activePendingPaymentOrders = orders.filter((o: any) => {
+    if (o.status !== "pending_payment") return false;
+    const elapsed = Date.now() - new Date(o.createdAt).getTime();
+    return elapsed < PIX_EXPIRY_MS;
+  });
+  const pendingOrdersCount = orders.filter((o: any) => o.status === "pending").length + activePendingPaymentOrders.length;
   const menuItems = [
     { icon: <LayoutDashboard className="w-5 h-5" />, label: "Dashboard", id: "dashboard" },
     { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread || undefined },
@@ -2274,7 +2341,7 @@ export function VendedorPanel() {
               {/* Order Stats */}
               <div className="grid grid-cols-5 gap-1.5">
                 {[
-                  { label: "Aguard. PIX", count: orders.filter((o: any) => o.status === "pending_payment").length, color: "#f59e0b", icon: <QrCode className="w-3.5 h-3.5" /> },
+                  { label: "Aguard. PIX", count: activePendingPaymentOrders.length, color: "#f59e0b", icon: <QrCode className="w-3.5 h-3.5" /> },
                   { label: "Pendentes", count: orders.filter((o: any) => o.status === "pending").length, color: "#ff9f00", icon: <Clock className="w-3.5 h-3.5" /> },
                   { label: "Aceitos", count: orders.filter((o: any) => o.status === "accepted" || o.status === "preparing").length, color: "#00f0ff", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
                   { label: "Entregando", count: orders.filter((o: any) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status)).length, color: "#ff00ff", icon: <Truck className="w-3.5 h-3.5" /> },
@@ -2290,8 +2357,8 @@ export function VendedorPanel() {
                 ))}
               </div>
 
-              {/* Awaiting Payment (pending_payment) — non-actionable, just info */}
-              {orders.filter((o: any) => o.status === "pending_payment").length > 0 && (
+              {/* Awaiting Payment (pending_payment) — auto-expires after 15 min */}
+              {activePendingPaymentOrders.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <motion.div animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 2, repeat: Infinity }}>
@@ -2300,11 +2367,11 @@ export function VendedorPanel() {
                     <h3 className="text-white font-bold text-sm">Aguardando Pagamento PIX</h3>
                     <motion.span animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
                       className="ml-auto px-2 py-0.5 bg-[#f59e0b]/20 text-[#f59e0b] rounded-full text-[10px] font-bold">
-                      {orders.filter((o: any) => o.status === "pending_payment").length}
+                      {activePendingPaymentOrders.length}
                     </motion.span>
                   </div>
                   <div className="space-y-2">
-                    {orders.filter((o: any) => o.status === "pending_payment").map((order: any) => (
+                    {activePendingPaymentOrders.map((order: any) => (
                       <motion.div key={order.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
                         className="relative overflow-hidden bg-[#12121a]/90 border border-[#f59e0b]/20 rounded-2xl"
                       >
@@ -2359,13 +2426,7 @@ export function VendedorPanel() {
                               </div>
                             </div>
                           )}
-                          <div className="flex items-center gap-2 px-2 py-2 bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-xl">
-                            <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                              className="w-4 h-4 border-2 border-[#f59e0b]/30 border-t-[#f59e0b] rounded-full shrink-0" />
-                            <p className="text-[#f59e0b]/80 text-[10px] font-medium">
-                              Cliente está realizando o pagamento PIX. O pedido aparecerá como "Novo" após confirmação.
-                            </p>
-                          </div>
+                          <VendorPixCountdown createdAt={order.createdAt} />
                         </div>
                       </motion.div>
                     ))}

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Bell, X, MessageSquare, ShoppingBag, CreditCard, Phone, Check, Trash2, Code, UserPlus, Zap, Banknote, Truck } from "lucide-react";
+import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 interface Notification {
   id: string;
@@ -153,6 +154,53 @@ export function NotificationBell({ userKey }: NotificationBellProps) {
     window.addEventListener("app-notification" as any, handler);
     return () => window.removeEventListener("app-notification" as any, handler);
   }, [persistNotifications, resolvedKey]);
+
+  // Poll server-side notifications (for cross-user notifications like admin ← vendor)
+  const lastServerPollRef = useRef<string>("");
+  useEffect(() => {
+    if (resolvedKey === "anonymous") return;
+    const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-42377006`;
+    const pollServer = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/inapp-notifications/${encodeURIComponent(resolvedKey)}`, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.success && Array.isArray(data.notifications)) {
+          const unread = data.notifications.filter((n: any) => !n.read);
+          if (unread.length > 0) {
+            const fingerprint = unread.map((n: any) => n.id).join(",");
+            if (fingerprint !== lastServerPollRef.current) {
+              lastServerPollRef.current = fingerprint;
+              // Merge server notifications into local state (avoid duplicates)
+              persistNotifications((prev) => {
+                const existingIds = new Set(prev.map((p) => p.id));
+                const newOnes = unread.filter((n: any) => !existingIds.has(n.id));
+                if (newOnes.length > 0) {
+                  setFlashNew(true);
+                  setTimeout(() => setFlashNew(false), 2000);
+                  return [...newOnes, ...prev].slice(0, MAX_NOTIFICATIONS);
+                }
+                return prev;
+              });
+              // Mark as read on server to avoid re-polling
+              await fetch(`${API_BASE}/inapp-notifications/mark-read`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}` },
+                body: JSON.stringify({ userKey: resolvedKey, notificationIds: unread.map((n: any) => n.id) }),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        // Silent fail for polling
+      }
+    };
+    pollServer();
+    const interval = setInterval(pollServer, 8000);
+    return () => clearInterval(interval);
+  }, [resolvedKey, persistNotifications]);
 
   // Close on outside click
   useEffect(() => {

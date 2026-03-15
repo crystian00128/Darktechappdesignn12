@@ -135,6 +135,7 @@ function AdminWithdrawalRequests() {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState<string | null>(null);
+  const [copiedPixId, setCopiedPixId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "completed">("all");
   const [dateFilterStart, setDateFilterStart] = useState(() => {
     const d = new Date(); d.setHours(0,0,0,0);
@@ -418,7 +419,22 @@ function AdminWithdrawalRequests() {
                     <div className="grid grid-cols-2 gap-2 text-[11px]">
                       <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
                         <span className="text-gray-600 block">PIX Destino</span>
-                        <span className="text-white font-mono text-[10px] break-all">{req.pixAddress || "Não informado"}</span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-white font-mono text-[10px] break-all flex-1">{req.pixAddress || "Não informado"}</span>
+                          {req.pixAddress && (
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(req.pixAddress).catch(() => {});
+                                setCopiedPixId(req.id);
+                                setTimeout(() => setCopiedPixId(null), 2000);
+                              }}
+                              className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors shrink-0"
+                              title="Copiar chave PIX"
+                            >
+                              {copiedPixId === req.id ? <Check className="w-3 h-3 text-[#00ff41]" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
                         <span className="text-gray-600 block">Solicitado em</span>
@@ -482,6 +498,10 @@ function AdminWithdrawalRequests() {
 
 export function AdminPanel() {
   const navigate = useNavigate();
+  const currentUser = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("currentUser") || "{}"); } catch { return {}; }
+  }, []);
+  const adminUserKey = `admin:${currentUser.username || "admin"}`;
   const [activeTab, setActiveTab] = useState("dashboard");
   const [copied, setCopied] = useState<string | false>(false);
   const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
@@ -659,7 +679,7 @@ export function AdminPanel() {
   };
 
   return (
-    <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Painel Admin" userKey="admin:admin">
+    <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Painel Admin" userKey={adminUserKey}>
       {/* ===================== DASHBOARD ===================== */}
       {activeTab === "dashboard" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
@@ -808,30 +828,21 @@ export function AdminPanel() {
               </div>
 
               {/* Admin Codes - compact */}
-              {adminCodes.length > 0 && (
+              {pendingAdminCodes.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-gray-500 text-xs font-semibold mb-2 flex items-center gap-1.5">
-                    <Ticket className="w-3 h-3" /> Codigos do Admin
+                    <Ticket className="w-3 h-3" /> Codigos Pendentes do Admin
                   </h4>
                   <div className="grid grid-cols-1 gap-1.5">
-                    {adminCodes.map((code: any, i: number) => (
+                    {pendingAdminCodes.map((code: any, i: number) => (
                       <div
                         key={`${code.code}-${i}`}
-                        className={`flex items-center justify-between p-2.5 rounded-lg border ${
-                          code.used ? "bg-[#00ff41]/5 border-[#00ff41]/15" : "bg-[#ff9f00]/5 border-[#ff9f00]/20"
-                        }`}
+                        className="flex items-center justify-between p-2.5 rounded-lg border bg-[#ff9f00]/5 border-[#ff9f00]/20"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {code.used ? (
-                            <CheckCircle2 className="w-3 h-3 text-[#00ff41] shrink-0" />
-                          ) : (
-                            <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />
-                          )}
+                          <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />
                           <div className="min-w-0">
                             <span className="text-white font-mono text-xs truncate block">{code.code}</span>
-                            {code.used && code.usedBy && (
-                              <p className="text-[#00ff41] text-[9px] truncate">@{code.usedBy}</p>
-                            )}
                           </div>
                         </div>
                         <button
@@ -871,9 +882,6 @@ export function AdminPanel() {
                               <p className="text-gray-500 text-xs truncate">
                                 @{vendedor.username} · {vendedor.stats?.totalClientes || 0}C · {vendedor.stats?.totalMotoristas || 0}M
                               </p>
-                              {vendedor.inviteCodeUsed && (
-                                <p className="text-[#00f0ff]/60 text-[9px] font-mono truncate">{vendedor.inviteCodeUsed}</p>
-                              )}
                             </div>
                           </button>
                           <div className="flex items-center gap-1.5 ml-2 shrink-0">
@@ -915,42 +923,49 @@ export function AdminPanel() {
                               className="overflow-hidden"
                             >
                               <div className="bg-[#0a0a12]/60 p-4 space-y-4 border-t border-[#1f1f2e]/40">
-                                {/* Códigos do Vendedor */}
+                                {/* Códigos Pendentes do Vendedor (used codes are removed) */}
                                 <div>
-                                  <h4 className="text-gray-500 text-xs font-semibold mb-2 flex items-center gap-1.5">
-                                    <Ticket className="w-3 h-3" /> Codigos de {vendedor.name}
-                                  </h4>
-                                  {vendedor.codesGenerated?.cliente?.length > 0 && (
-                                    <div className="mb-2">
-                                      <p className="text-[#00f0ff] text-[11px] font-semibold mb-1">Clientes</p>
-                                      <div className="space-y-1">
-                                        {vendedor.codesGenerated.cliente.map((c: any, i: number) => (
-                                          <div key={`c-${i}`} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${c.used ? "bg-[#00ff41]/5 border border-[#00ff41]/10" : "bg-[#ff9f00]/5 border border-[#ff9f00]/10"}`}>
-                                            {c.used ? <CheckCircle2 className="w-3 h-3 text-[#00ff41] shrink-0" /> : <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />}
-                                            <span className="text-white font-mono truncate">{c.code}</span>
-                                            {c.used && c.usedBy && <span className="text-[#00ff41] text-[9px] shrink-0">@{c.usedBy}</span>}
+                                  {(() => {
+                                    const pendingCliente = (vendedor.codesGenerated?.cliente || []).filter((c: any) => !c.used);
+                                    const pendingMotorista = (vendedor.codesGenerated?.motorista || []).filter((c: any) => !c.used);
+                                    const hasAny = pendingCliente.length > 0 || pendingMotorista.length > 0;
+                                    return (
+                                      <>
+                                        <h4 className="text-gray-500 text-xs font-semibold mb-2 flex items-center gap-1.5">
+                                          <Ticket className="w-3 h-3" /> Codigos Pendentes de {vendedor.name}
+                                        </h4>
+                                        {pendingCliente.length > 0 && (
+                                          <div className="mb-2">
+                                            <p className="text-[#00f0ff] text-[11px] font-semibold mb-1">Clientes</p>
+                                            <div className="space-y-1">
+                                              {pendingCliente.map((c: any, i: number) => (
+                                                <div key={`c-${i}`} className="flex items-center gap-2 p-2 rounded-lg text-xs bg-[#ff9f00]/5 border border-[#ff9f00]/10">
+                                                  <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />
+                                                  <span className="text-white font-mono truncate">{c.code}</span>
+                                                </div>
+                                              ))}
+                                            </div>
                                           </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {vendedor.codesGenerated?.motorista?.length > 0 && (
-                                    <div className="mb-2">
-                                      <p className="text-[#ff00ff] text-[11px] font-semibold mb-1">Motoristas</p>
-                                      <div className="space-y-1">
-                                        {vendedor.codesGenerated.motorista.map((c: any, i: number) => (
-                                          <div key={`m-${i}`} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${c.used ? "bg-[#00ff41]/5 border border-[#00ff41]/10" : "bg-[#ff9f00]/5 border border-[#ff9f00]/10"}`}>
-                                            {c.used ? <CheckCircle2 className="w-3 h-3 text-[#00ff41] shrink-0" /> : <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />}
-                                            <span className="text-white font-mono truncate">{c.code}</span>
-                                            {c.used && c.usedBy && <span className="text-[#00ff41] text-[9px] shrink-0">@{c.usedBy}</span>}
+                                        )}
+                                        {pendingMotorista.length > 0 && (
+                                          <div className="mb-2">
+                                            <p className="text-[#ff00ff] text-[11px] font-semibold mb-1">Motoristas</p>
+                                            <div className="space-y-1">
+                                              {pendingMotorista.map((c: any, i: number) => (
+                                                <div key={`m-${i}`} className="flex items-center gap-2 p-2 rounded-lg text-xs bg-[#ff9f00]/5 border border-[#ff9f00]/10">
+                                                  <Clock className="w-3 h-3 text-[#ff9f00] shrink-0" />
+                                                  <span className="text-white font-mono truncate">{c.code}</span>
+                                                </div>
+                                              ))}
+                                            </div>
                                           </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {!vendedor.codesGenerated?.cliente?.length && !vendedor.codesGenerated?.motorista?.length && (
-                                    <p className="text-gray-600 text-[10px] italic">Nenhum codigo gerado</p>
-                                  )}
+                                        )}
+                                        {!hasAny && (
+                                          <p className="text-gray-600 text-[10px] italic">Nenhum codigo pendente</p>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
 
                                 {/* Clientes */}
