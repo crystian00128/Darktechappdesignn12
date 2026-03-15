@@ -51,7 +51,7 @@ export function useLinkedVendors(username: string | null) {
     return () => { cancelled = true; };
   }, [username, refreshKey]);
 
-  // Auto-refresh every 15s (for online status updates)
+  // Auto-refresh every 8s (for fast online status updates)
   useEffect(() => {
     if (!username) return;
 
@@ -71,7 +71,7 @@ export function useLinkedVendors(username: string | null) {
       } catch {
         // silent
       }
-    }, 15000);
+    }, 8000);
 
     return () => clearInterval(interval);
   }, [username]);

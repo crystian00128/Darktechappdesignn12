@@ -127,7 +127,7 @@ export function ChatPanel({
   // ─── Fetch unread counts ─────────────────────
   const loadUnreadCounts = useCallback(async () => {
     try {
-      const allUn = [...new Set([...contacts.map(c => c.username), ...(groupedContacts?.flatMap(g => g.contacts.map(c => c.username)) || [])])];
+      const allUn = [...new Set([...contacts.map(c => c.username), ...(groupedContacts?.flatMap(g => g.contacts.map(c => c.username)) || [])])].filter(Boolean);
       if (allUn.length === 0) return;
       const res = await api.getUnreadCounts(currentUsername, allUn);
       if (res.success) setUnreadCounts(res.counts || {});

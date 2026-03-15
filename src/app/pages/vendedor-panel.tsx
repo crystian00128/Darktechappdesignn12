@@ -1693,6 +1693,8 @@ export function VendedorPanel() {
     if (!currentUser.username) return;
     // Send heartbeat immediately with current online state
     api.sendHeartbeat(currentUser.username, isOnline).catch(() => {});
+    // Also sync status endpoint for immediate toggle effect
+    api.setUserStatus(currentUser.username, isOnline).catch(() => {});
     // Only keep sending heartbeats while online toggle is ON
     if (isOnline) {
       const hb = setInterval(() => api.sendHeartbeat(currentUser.username, true).catch(() => {}), 12000);

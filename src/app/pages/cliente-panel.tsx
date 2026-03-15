@@ -511,35 +511,101 @@ export function ClientePanel() {
                     return (
                       <div key={vendor.username} className="space-y-3">
                         {/* Vendor Header */}
-                        <div className={`flex items-center gap-3 p-3 rounded-xl border ${isOffline ? "bg-[#12121a]/60 border-[#1f1f2e]/40" : "bg-[#12121a] border-[#1f1f2e]"}`}>
-                          <div className="relative">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${isOffline ? "bg-gray-700 text-gray-400" : "bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] text-white"}`}>
-                              {getAvatarText(vendor.photo?.length > 2 ? vendor.name : vendor.photo)}
-                            </div>
-                            <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#12121a] ${isOffline ? "bg-gray-500" : "bg-[#00ff41]"}`} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className={`font-bold text-sm truncate ${isOffline ? "text-gray-500" : "text-white"}`}>
-                              {vendor.name}
-                            </h3>
-                            <div className="flex items-center gap-1.5">
-                              {isOffline ? (
-                                <>
-                                  <WifiOff className="w-3 h-3 text-gray-600" />
-                                  <span className="text-gray-600 text-[11px]">Offline - Loja fechada</span>
-                                </>
+                        <div className="relative">
+                          {/* Online glow effect - animated neon border */}
+                          {!isOffline && (
+                            <>
+                              <motion.div
+                                className="absolute -inset-[1px] rounded-xl z-0 pointer-events-none"
+                                style={{
+                                  background: "linear-gradient(135deg, #00ff41, #00f0ff, #8b5cf6, #00ff41)",
+                                  backgroundSize: "300% 300%",
+                                }}
+                                animate={{
+                                  backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"],
+                                }}
+                                transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                              />
+                              <motion.div
+                                className="absolute -inset-[3px] rounded-xl z-0 pointer-events-none blur-sm"
+                                style={{
+                                  background: "linear-gradient(135deg, #00ff41, #00f0ff, #8b5cf6, #00ff41)",
+                                  backgroundSize: "300% 300%",
+                                }}
+                                animate={{
+                                  backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"],
+                                  opacity: [0.3, 0.6, 0.3],
+                                }}
+                                transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                              />
+                            </>
+                          )}
+                          <div className={`relative z-10 flex items-center gap-3 p-3 rounded-xl ${isOffline ? "bg-[#12121a]/60 border border-[#1f1f2e]/40" : "bg-[#0a0a12]"}`}>
+                            <div className="relative">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${isOffline ? "bg-gray-700 text-gray-400" : "bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] text-white"}`}>
+                                {getAvatarText(vendor.photo?.length > 2 ? vendor.name : vendor.photo)}
+                              </div>
+                              {!isOffline ? (
+                                <motion.div
+                                  className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#0a0a12] bg-[#00ff41]"
+                                  animate={{
+                                    scale: [1, 1.4, 1],
+                                    boxShadow: [
+                                      "0 0 4px rgba(0,255,65,0.5)",
+                                      "0 0 12px rgba(0,255,65,1)",
+                                      "0 0 4px rgba(0,255,65,0.5)",
+                                    ],
+                                  }}
+                                  transition={{ duration: 1.5, repeat: Infinity }}
+                                />
                               ) : (
-                                <>
-                                  <Wifi className="w-3 h-3 text-[#00ff41]" />
-                                  <span className="text-[#00ff41] text-[11px]">Online</span>
-                                </>
+                                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#12121a] bg-gray-500" />
                               )}
                             </div>
-                          </div>
-                          <div className="text-right">
-                            <span className={`text-[11px] font-medium px-2 py-1 rounded-lg ${isOffline ? "bg-gray-800 text-gray-500" : "bg-[#00f0ff]/10 text-[#00f0ff]"}`}>
-                              {vendorProducts.length} {vendorProducts.length === 1 ? "produto" : "produtos"}
-                            </span>
+                            <div className="flex-1 min-w-0">
+                              <h3 className={`font-bold text-sm truncate ${isOffline ? "text-gray-500" : "text-white"}`}>
+                                {vendor.name}
+                              </h3>
+                              <div className="flex items-center gap-1.5">
+                                {isOffline ? (
+                                  <>
+                                    <WifiOff className="w-3 h-3 text-gray-600" />
+                                    <span className="text-gray-600 text-[11px]">Offline - Loja fechada</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <motion.div
+                                      animate={{ opacity: [1, 0.4, 1] }}
+                                      transition={{ duration: 1.2, repeat: Infinity }}
+                                    >
+                                      <Wifi className="w-3 h-3 text-[#00ff41]" />
+                                    </motion.div>
+                                    <motion.span
+                                      className="text-[#00ff41] text-[11px] font-semibold"
+                                      animate={{ opacity: [1, 0.6, 1] }}
+                                      transition={{ duration: 1.2, repeat: Infinity }}
+                                    >
+                                      Online agora
+                                    </motion.span>
+                                    <motion.div className="ml-1 flex gap-[2px]" aria-hidden>
+                                      {[0, 1, 2].map(i => (
+                                        <motion.div
+                                          key={i}
+                                          className="w-[3px] h-[10px] rounded-full bg-[#00ff41]"
+                                          animate={{ scaleY: [0.4, 1, 0.4] }}
+                                          transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.15 }}
+                                        />
+                                      ))}
+                                    </motion.div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className={`text-[11px] font-medium px-2 py-1 rounded-lg ${isOffline ? "bg-gray-800 text-gray-500" : "bg-[#00f0ff]/10 text-[#00f0ff]"}`}>
+                                {vendorProducts.length} {vendorProducts.length === 1 ? "produto" : "produtos"}
+                              </span>
+                            </div>
                           </div>
                         </div>
 

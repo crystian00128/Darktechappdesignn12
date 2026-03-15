@@ -3588,16 +3588,21 @@ app.post("/make-server-42377006/chat/last-messages", async (c) => {
     if (!username || !Array.isArray(contacts)) return c.json({ success: false, error: "Missing data" }, 400);
     const lastMessages: Record<string, any> = {};
     for (const contact of contacts) {
-      const chatKey = [username, contact].sort().join(":");
-      const messages = await kv.get(`chat:${chatKey}`) || [];
-      if (messages.length > 0) {
-        const last = messages[messages.length - 1];
-        lastMessages[contact] = {
-          text: last.text || "",
-          type: last.type || "text",
-          from: last.from,
-          timestamp: last.timestamp,
-        };
+      if (!contact || typeof contact !== "string") continue;
+      try {
+        const chatKey = [username, contact].sort().join(":");
+        const messages = await kv.get(`chat:${chatKey}`) || [];
+        if (messages.length > 0) {
+          const last = messages[messages.length - 1];
+          lastMessages[contact] = {
+            text: last.text || "",
+            type: last.type || "text",
+            from: last.from,
+            timestamp: last.timestamp,
+          };
+        }
+      } catch (innerErr) {
+        console.error(`Erro last-messages for contact ${contact}:`, innerErr);
       }
     }
     return c.json({ success: true, lastMessages });
@@ -3663,15 +3668,20 @@ app.post("/make-server-42377006/chat/unread-counts", async (c) => {
     if (!username || !Array.isArray(contacts)) return c.json({ success: false, error: "Missing data" }, 400);
     const counts: Record<string, number> = {};
     for (const contactUsername of contacts) {
-      const chatKey1 = `chat:${username}:${contactUsername}`;
-      const chatKey2 = `chat:${contactUsername}:${username}`;
-      const msgs1 = (await kv.get(chatKey1)) || [];
-      const msgs2 = (await kv.get(chatKey2)) || [];
-      const allMsgs = [...(Array.isArray(msgs1) ? msgs1 : []), ...(Array.isArray(msgs2) ? msgs2 : [])];
-      const lastRead = await kv.get(`lastread:${username}:${contactUsername}`);
-      const lastReadTs = lastRead?.timestamp || 0;
-      const unread = allMsgs.filter((m: any) => m.from === contactUsername && new Date(m.timestamp).getTime() > lastReadTs).length;
-      if (unread > 0) counts[contactUsername] = unread;
+      if (!contactUsername || typeof contactUsername !== "string") continue;
+      try {
+        const chatKey1 = `chat:${username}:${contactUsername}`;
+        const chatKey2 = `chat:${contactUsername}:${username}`;
+        const msgs1 = (await kv.get(chatKey1)) || [];
+        const msgs2 = (await kv.get(chatKey2)) || [];
+        const allMsgs = [...(Array.isArray(msgs1) ? msgs1 : []), ...(Array.isArray(msgs2) ? msgs2 : [])];
+        const lastRead = await kv.get(`lastread:${username}:${contactUsername}`);
+        const lastReadTs = lastRead?.timestamp || 0;
+        const unread = allMsgs.filter((m: any) => m.from === contactUsername && new Date(m.timestamp).getTime() > lastReadTs).length;
+        if (unread > 0) counts[contactUsername] = unread;
+      } catch (innerErr) {
+        console.error(`Erro unread-counts for contact ${contactUsername}:`, innerErr);
+      }
     }
     return c.json({ success: true, counts });
   } catch (error) {
@@ -3852,15 +3862,16 @@ app.post("/make-server-42377006/vendor-wallet/withdraw", async (c) => {
     // Send push notification to admin
     const allUsers = await kv.getByPrefix("user:");
     for (const u of allUsers) {
-      if (u?.value?.role === "admin") {
-        await sendPushToUser(u.value.username, {
+      // getByPrefix returns plain values (not {key, value} pairs)
+      if (u?.role === "admin") {
+        await sendPushToUser(u.username, {
           title: "💰 Nova Solicitação de Saque",
           body: `${user.name || username} solicitou saque de R$ ${amount.toFixed(2)}`,
           tag: `withdrawal-${withdrawal.id}`,
           data: { url: "/admin", type: "withdrawal_request" },
         });
         // Server-side in-app notification for admin bell
-        const adminKey = `inapp_notif:admin:${u.value.username}`;
+        const adminKey = `inapp_notif:admin:${u.username}`;
         const adminNotifs = await kv.get(adminKey) || [];
         adminNotifs.unshift({
           id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
