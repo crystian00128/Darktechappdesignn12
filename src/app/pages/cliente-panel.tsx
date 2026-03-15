@@ -13,17 +13,15 @@ import {
   LogOut,
   Link,
   RefreshCw,
-  MapPin,
   QrCode,
   Minus,
   Copy,
-  Truck,
-  Clock,
-  ChefHat,
-  Navigation,
-  CheckCircle2,
+  Store,
+  WifiOff,
+  Wifi,
+  AlertTriangle,
 } from "lucide-react";
-import { useUserCreator } from "../hooks/useUserCreator";
+import { useLinkedVendors, type LinkedVendor } from "../hooks/useLinkedVendors";
 import { useCallSystem } from "../hooks/useCallSystem";
 import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overlays";
 import * as api from "../services/api";
@@ -37,6 +35,14 @@ const getAvatarText = (text: string | null | undefined): string => {
   return text.substring(0, 2).toUpperCase();
 };
 
+// ── Cart item includes vendorUsername to enforce per-vendor separation ──
+interface CartItem {
+  product: any;
+  qty: number;
+  vendorUsername: string;
+  vendorName: string;
+}
+
 export function ClientePanel() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"chat" | "adicionar" | "loja" | "pedidos">("chat");
@@ -44,45 +50,53 @@ export function ClientePanel() {
   const [linkingCode, setLinkingCode] = useState(false);
   const [linkSuccess, setLinkSuccess] = useState("");
   const [linkError, setLinkError] = useState("");
-  const [products, setProducts] = useState<any[]>([]);
-  const [cart, setCart] = useState<{ product: any; qty: number }[]>([]);
+  // Products keyed by vendorUsername
+  const [productsByVendor, setProductsByVendor] = useState<Record<string, any[]>>({});
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [showCart, setShowCart] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<"waiting" | "generating" | "pix_ready" | "polling" | "success" | "error" | null>(null);
-  const [orderLoading, setOrderLoading] = useState(false);
   const [pixInvoice, setPixInvoice] = useState<any>(null);
   const [pixError, setPixError] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [feePreview, setFeePreview] = useState<any>(null);
   const [loadingFees, setLoadingFees] = useState(false);
+  const [showVendorConflict, setShowVendorConflict] = useState<{ product: any; vendorUsername: string; vendorName: string } | null>(null);
   const pixPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
-  const { creator: vendedor, loading, refetch } = useUserCreator(currentUser.username);
+  const { vendors, loading, refetch } = useLinkedVendors(currentUser.username);
   const callSystem = useCallSystem(currentUser.username);
 
   const handleStartCall = useCallback(async (to: string, type: "voice" | "video", _toName: string) => {
     await callSystem.startCall(to, type, currentUser.name || currentUser.username, currentUser.photo);
   }, [callSystem.startCall, currentUser.name, currentUser.username, currentUser.photo]);
 
+  // Load products from ALL linked vendors
   useEffect(() => {
-    if (vendedor?.username) {
-      loadProducts();
-    }
-    loadOrders();
-  }, [vendedor]);
+    if (vendors.length === 0) return;
+    loadAllProducts();
+  }, [vendors.length]);
 
-  const loadProducts = async () => {
-    if (!vendedor?.username) return;
-    try {
-      const res = await api.getProducts(vendedor.username);
-      if (res.success) setProducts(res.products?.filter((p: any) => p.active) || []);
-    } catch (err) {
-      console.error("Erro ao carregar produtos:", err);
+  const loadAllProducts = async () => {
+    setLoadingProducts(true);
+    const newProducts: Record<string, any[]> = {};
+    for (const vendor of vendors) {
+      try {
+        const res = await api.getProducts(vendor.username);
+        if (res.success) {
+          newProducts[vendor.username] = (res.products || []).filter((p: any) => p.active);
+        }
+      } catch (err) {
+        console.error(`Erro ao carregar produtos de ${vendor.username}:`, err);
+      }
     }
+    setProductsByVendor(newProducts);
+    setLoadingProducts(false);
   };
 
   const loadOrders = async () => {
@@ -94,15 +108,45 @@ export function ClientePanel() {
     }
   };
 
-  const addToCart = (product: any) => {
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  // ── Cart logic: per-vendor enforcement ──
+  const cartVendor = cart.length > 0 ? cart[0].vendorUsername : null;
+  const cartTotal = cart.reduce((sum, c) => sum + c.product.price * c.qty, 0);
+  const cartCount = cart.reduce((sum, c) => sum + c.qty, 0);
+
+  const addToCart = (product: any, vendorUsername: string, vendorName: string) => {
+    // Check if vendor is online
+    const vendor = vendors.find(v => v.username === vendorUsername);
+    if (vendor && !vendor.isOnline) {
+      sfx.playWarning();
+      return; // blocked - vendor offline
+    }
+
+    // If cart has items from a different vendor, ask to switch
+    if (cartVendor && cartVendor !== vendorUsername) {
+      setShowVendorConflict({ product, vendorUsername, vendorName });
+      return;
+    }
+
     sfx.playClick();
     setCart((prev) => {
       const existing = prev.find((c) => c.product.id === product.id);
       if (existing) {
         return prev.map((c) => c.product.id === product.id ? { ...c, qty: c.qty + 1 } : c);
       }
-      return [...prev, { product, qty: 1 }];
+      return [...prev, { product, qty: 1, vendorUsername, vendorName }];
     });
+  };
+
+  const handleVendorConflictSwitch = () => {
+    if (!showVendorConflict) return;
+    sfx.playClick();
+    const { product, vendorUsername, vendorName } = showVendorConflict;
+    setCart([{ product, qty: 1, vendorUsername, vendorName }]);
+    setShowVendorConflict(null);
   };
 
   const removeFromCart = (productId: string) => {
@@ -116,14 +160,11 @@ export function ClientePanel() {
     });
   };
 
-  const cartTotal = cart.reduce((sum, c) => sum + c.product.price * c.qty, 0);
-  const cartCount = cart.reduce((sum, c) => sum + c.qty, 0);
-
   // Load fee preview when cart changes
   useEffect(() => {
-    if (cart.length > 0 && vendedor?.username && cartTotal > 0) {
+    if (cart.length > 0 && cartVendor && cartTotal > 0) {
       setLoadingFees(true);
-      api.getOrderFeePreview(vendedor.username, cartTotal)
+      api.getOrderFeePreview(cartVendor, cartTotal)
         .then((res) => {
           if (res.success) setFeePreview(res.fees);
         })
@@ -132,10 +173,21 @@ export function ClientePanel() {
     } else {
       setFeePreview(null);
     }
-  }, [cartTotal, vendedor?.username, cart.length]);
+  }, [cartTotal, cartVendor, cart.length]);
 
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || !cartVendor) return;
+
+    // Re-check if vendor is still online
+    const vendor = vendors.find(v => v.username === cartVendor);
+    if (vendor && !vendor.isOnline) {
+      sfx.playWarning();
+      setPixError("O vendedor está offline. Aguarde ele ficar online para finalizar a compra.");
+      setShowPaymentModal(true);
+      setPaymentStatus("error");
+      return;
+    }
+
     setShowPaymentModal(true);
     setPaymentStatus("generating");
     setPixInvoice(null);
@@ -145,7 +197,7 @@ export function ClientePanel() {
     try {
       const orderRes = await api.createOrder({
         clientUsername: currentUser.username,
-        vendorUsername: vendedor!.username,
+        vendorUsername: cartVendor,
         items: cart.map((c) => ({ name: c.product.name, price: c.product.price, qty: c.qty, productId: c.product.id })),
         total: cartTotal,
         deliveryAddress,
@@ -162,7 +214,7 @@ export function ClientePanel() {
           externalId: orderId,
           metadata: {
             orderId,
-            vendorUsername: vendedor!.username,
+            vendorUsername: cartVendor,
             clientUsername: currentUser.username,
           },
         });
@@ -261,8 +313,6 @@ export function ClientePanel() {
         sfx.playSuccess();
         setLinkSuccess(`Conectado com sucesso ao vendedor ${response.creator?.name || response.message}!`);
         setInviteCode("");
-        const updatedUser = { ...currentUser, createdBy: response.creator?.username };
-        localStorage.setItem("currentUser", JSON.stringify(updatedUser));
         refetch();
         setTimeout(() => { setActiveTab("chat"); setLinkSuccess(""); }, 2000);
       }
@@ -286,9 +336,13 @@ export function ClientePanel() {
     cancelled: { label: "Cancelado", color: "#ff006e" },
   };
 
-  const chatContacts = vendedor
-    ? [{ username: vendedor.username, name: vendedor.name || "Vendedor", photo: vendedor.photo || "", role: vendedor.role }]
-    : [];
+  // Chat contacts = ALL linked vendors
+  const chatContacts = vendors.map(v => ({
+    username: v.username,
+    name: v.name || "Vendedor",
+    photo: v.photo || "",
+    role: v.role || "vendedor",
+  }));
 
   // ─── Sidebar unread badge polling ───
   const [totalUnread, setTotalUnread] = useState(0);
@@ -308,6 +362,9 @@ export function ClientePanel() {
     const interval = setInterval(poll, 8000);
     return () => clearInterval(interval);
   }, [currentUser.username, chatContacts.length]);
+
+  // Get the name of current cart vendor
+  const cartVendorName = cart.length > 0 ? cart[0].vendorName : "";
 
   if (loading) {
     return (
@@ -351,8 +408,14 @@ export function ClientePanel() {
               Painel Cliente
             </motion.span>
           </motion.h1>
-          {vendedor && (
-            <p className="text-gray-500 text-xs truncate">Vendedor: <span className="text-[#00f0ff]">{vendedor.name}</span></p>
+          {vendors.length > 0 && (
+            <p className="text-gray-500 text-xs truncate">
+              {vendors.length === 1 ? (
+                <>Vendedor: <span className="text-[#00f0ff]">{vendors[0].name}</span></>
+              ) : (
+                <><span className="text-[#00f0ff]">{vendors.length}</span> vendedores vinculados</>
+              )}
+            </p>
           )}
         </div>
         <div className="flex items-center gap-1.5">
@@ -382,7 +445,7 @@ export function ClientePanel() {
           {/* Chat */}
           {activeTab === "chat" && (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              {vendedor ? (
+              {chatContacts.length > 0 ? (
                 <ChatPanel currentUsername={currentUser.username} contacts={chatContacts} accentColor="#00f0ff" onStartCall={handleStartCall} autoOpenChat={chatContacts.length === 1 ? chatContacts[0].username : undefined} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full p-6">
@@ -399,54 +462,126 @@ export function ClientePanel() {
             </motion.div>
           )}
 
-          {/* Loja */}
+          {/* ═══════════════ LOJA ═══════════════ */}
           {activeTab === "loja" && (
             <motion.div key="loja" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full flex flex-col">
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">
-                <h2 className="text-white font-bold text-lg">
-                  {vendedor ? `Loja de ${vendedor.name}` : "Loja"}
-                </h2>
-                {!vendedor ? (
+              <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-40">
+                {vendors.length === 0 ? (
                   <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
+                    <Store className="w-12 h-12 text-gray-600 mx-auto mb-3" />
                     <p className="text-gray-400 text-sm">Conecte-se a um vendedor para ver os produtos</p>
+                    <motion.button whileTap={{ scale: 0.95 }} onClick={() => setActiveTab("adicionar")}
+                      className="mt-4 px-6 py-3 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white font-semibold rounded-xl text-sm">
+                      Vincular Vendedor
+                    </motion.button>
                   </div>
-                ) : products.length === 0 ? (
-                  <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
-                    <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                    <p className="text-gray-400 text-sm">O vendedor ainda nao adicionou produtos</p>
+                ) : loadingProducts ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader className="w-8 h-8 text-[#00f0ff] animate-spin" />
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    {products.map((product) => {
-                      const inCart = cart.find((c) => c.product.id === product.id);
-                      return (
-                        <motion.div key={product.id} whileTap={{ scale: 0.97 }}
-                          className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-3 hover:border-[#00f0ff]/50 transition-all">
-                          <div className="w-full aspect-square bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/20 rounded-xl mb-3 flex items-center justify-center">
-                            <Package className="w-10 h-10 text-[#00f0ff]" />
-                          </div>
-                          <h3 className="text-white font-bold text-sm mb-1 truncate">{product.name}</h3>
-                          <p className="text-[#00ff41] font-bold text-lg mb-2">R$ {Number(product.price).toFixed(2)}</p>
-                          {inCart ? (
-                            <div className="flex items-center justify-between">
-                              <button onClick={() => removeFromCart(product.id)} className="w-9 h-9 rounded-lg bg-[#1f1f2e] text-white flex items-center justify-center">
-                                <Minus className="w-4 h-4" />
-                              </button>
-                              <span className="text-white font-bold text-base">{inCart.qty}</span>
-                              <button onClick={() => addToCart(product)} className="w-9 h-9 rounded-lg bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
-                                <Plus className="w-4 h-4" />
-                              </button>
+                  vendors.map((vendor) => {
+                    const vendorProducts = productsByVendor[vendor.username] || [];
+                    const isOffline = !vendor.isOnline;
+
+                    return (
+                      <div key={vendor.username} className="space-y-3">
+                        {/* Vendor Header */}
+                        <div className={`flex items-center gap-3 p-3 rounded-xl border ${isOffline ? "bg-[#12121a]/60 border-[#1f1f2e]/40" : "bg-[#12121a] border-[#1f1f2e]"}`}>
+                          <div className="relative">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${isOffline ? "bg-gray-700 text-gray-400" : "bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] text-white"}`}>
+                              {getAvatarText(vendor.photo?.length > 2 ? vendor.name : vendor.photo)}
                             </div>
-                          ) : (
-                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => addToCart(product)}
-                              className="w-full py-2.5 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white rounded-xl font-medium text-sm">
-                              Adicionar
-                            </motion.button>
-                          )}
-                        </motion.div>
-                      );
-                    })}
-                  </div>
+                            <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[#12121a] ${isOffline ? "bg-gray-500" : "bg-[#00ff41]"}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className={`font-bold text-sm truncate ${isOffline ? "text-gray-500" : "text-white"}`}>
+                              {vendor.name}
+                            </h3>
+                            <div className="flex items-center gap-1.5">
+                              {isOffline ? (
+                                <>
+                                  <WifiOff className="w-3 h-3 text-gray-600" />
+                                  <span className="text-gray-600 text-[11px]">Offline - Loja fechada</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Wifi className="w-3 h-3 text-[#00ff41]" />
+                                  <span className="text-[#00ff41] text-[11px]">Online</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className={`text-[11px] font-medium px-2 py-1 rounded-lg ${isOffline ? "bg-gray-800 text-gray-500" : "bg-[#00f0ff]/10 text-[#00f0ff]"}`}>
+                              {vendorProducts.length} {vendorProducts.length === 1 ? "produto" : "produtos"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Offline overlay message */}
+                        {isOffline && vendorProducts.length > 0 && (
+                          <div className="flex items-center gap-2 px-3 py-2 bg-[#ff006e]/5 border border-[#ff006e]/20 rounded-xl">
+                            <AlertTriangle className="w-3.5 h-3.5 text-[#ff006e] shrink-0" />
+                            <p className="text-[#ff006e]/80 text-[11px]">Vendedor offline. Compras indisponiveis no momento.</p>
+                          </div>
+                        )}
+
+                        {/* Products grid */}
+                        {vendorProducts.length === 0 ? (
+                          <div className="bg-[#0a0a12] border border-[#1f1f2e]/40 rounded-xl p-5 text-center">
+                            <Package className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                            <p className="text-gray-600 text-xs">Nenhum produto cadastrado</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-3">
+                            {vendorProducts.map((product) => {
+                              const inCart = cart.find((c) => c.product.id === product.id);
+                              return (
+                                <motion.div key={product.id} whileTap={isOffline ? undefined : { scale: 0.97 }}
+                                  className={`relative bg-[#12121a] border rounded-2xl p-3 transition-all ${isOffline
+                                    ? "border-[#1f1f2e]/30 opacity-50 grayscale"
+                                    : "border-[#1f1f2e] hover:border-[#00f0ff]/50"
+                                  }`}>
+                                  {/* Offline lock overlay */}
+                                  {isOffline && (
+                                    <div className="absolute inset-0 z-10 rounded-2xl flex items-center justify-center bg-black/30">
+                                      <WifiOff className="w-6 h-6 text-gray-500" />
+                                    </div>
+                                  )}
+                                  <div className="w-full aspect-square bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/20 rounded-xl mb-3 flex items-center justify-center">
+                                    <Package className="w-10 h-10 text-[#00f0ff]" />
+                                  </div>
+                                  <h3 className="text-white font-bold text-sm mb-1 truncate">{product.name}</h3>
+                                  <p className="text-[#00ff41] font-bold text-lg mb-2">R$ {Number(product.price).toFixed(2)}</p>
+                                  {inCart && !isOffline ? (
+                                    <div className="flex items-center justify-between">
+                                      <button onClick={() => removeFromCart(product.id)} className="w-9 h-9 rounded-lg bg-[#1f1f2e] text-white flex items-center justify-center">
+                                        <Minus className="w-4 h-4" />
+                                      </button>
+                                      <span className="text-white font-bold text-base">{inCart.qty}</span>
+                                      <button onClick={() => addToCart(product, vendor.username, vendor.name)} className="w-9 h-9 rounded-lg bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
+                                        <Plus className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  ) : !isOffline ? (
+                                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => addToCart(product, vendor.username, vendor.name)}
+                                      className="w-full py-2.5 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white rounded-xl font-medium text-sm">
+                                      Adicionar
+                                    </motion.button>
+                                  ) : (
+                                    <div className="w-full py-2.5 bg-gray-800 text-gray-500 rounded-xl font-medium text-sm text-center">
+                                      Indisponivel
+                                    </div>
+                                  )}
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
@@ -473,7 +608,7 @@ export function ClientePanel() {
                             </div>
                             <div>
                               <p className="text-white text-sm font-semibold">{cartCount} {cartCount === 1 ? "item" : "itens"}</p>
-                              <p className="text-gray-400 text-[11px]">no carrinho</p>
+                              <p className="text-gray-500 text-[11px] truncate max-w-[140px]">{cartVendorName}</p>
                             </div>
                           </div>
                           <p className="text-[#00ff41] font-bold text-xl">R$ {cartTotal.toFixed(2)}</p>
@@ -502,7 +637,7 @@ export function ClientePanel() {
 
           {/* Adicionar Vendedor */}
           {activeTab === "adicionar" && (
-            <motion.div key="adicionar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 flex items-center justify-center h-full overflow-y-auto pb-16">
+            <motion.div key="adicionar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 flex flex-col items-center justify-center h-full overflow-y-auto pb-16 gap-5">
               <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-6 w-full max-w-sm">
                 <div className="text-center mb-6">
                   <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] mb-3">
@@ -536,6 +671,32 @@ export function ClientePanel() {
                   )}
                 </div>
               </div>
+
+              {/* List of currently linked vendors */}
+              {vendors.length > 0 && (
+                <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-4 w-full max-w-sm">
+                  <h3 className="text-gray-400 text-xs uppercase tracking-wider font-medium mb-3">Vendedores Vinculados ({vendors.length})</h3>
+                  <div className="space-y-2">
+                    {vendors.map((v) => (
+                      <div key={v.username} className="flex items-center gap-3 p-2.5 bg-[#0a0a12] rounded-xl">
+                        <div className="relative">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00f0ff] to-[#8b5cf6] flex items-center justify-center text-white text-xs font-bold">
+                            {getAvatarText(v.photo?.length > 2 ? v.name : v.photo)}
+                          </div>
+                          <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0a0a12] ${v.isOnline ? "bg-[#00ff41]" : "bg-gray-500"}`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm font-semibold truncate">{v.name}</p>
+                          <p className={`text-[11px] ${v.isOnline ? "text-[#00ff41]" : "text-gray-500"}`}>
+                            {v.isOnline ? "Online" : "Offline"}
+                          </p>
+                        </div>
+                        <Store className="w-4 h-4 text-gray-600" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -576,7 +737,7 @@ export function ClientePanel() {
         </div>
       </nav>
 
-      {/* Cart Drawer */}
+      {/* ═══════════════ Cart Drawer ═══════════════ */}
       <AnimatePresence>
         {showCart && (
           <>
@@ -584,7 +745,12 @@ export function ClientePanel() {
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25 }}
               className="fixed bottom-0 left-0 right-0 max-h-[85vh] bg-[#12121a] border-t border-[#1f1f2e] z-50 flex flex-col rounded-t-2xl">
               <div className="flex items-center justify-between p-4 border-b border-[#1f1f2e]">
-                <h3 className="text-white font-bold text-lg">Carrinho ({cartCount})</h3>
+                <div>
+                  <h3 className="text-white font-bold text-lg">Carrinho ({cartCount})</h3>
+                  {cartVendorName && (
+                    <p className="text-[#00f0ff] text-xs flex items-center gap-1"><Store className="w-3 h-3" /> {cartVendorName}</p>
+                  )}
+                </div>
                 <button onClick={() => setShowCart(false)} className="p-2 hover:bg-[#1f1f2e] rounded-lg text-gray-400">
                   <X className="w-5 h-5" />
                 </button>
@@ -604,7 +770,7 @@ export function ClientePanel() {
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <span className="text-white font-bold w-4 text-center text-sm">{item.qty}</span>
-                      <button onClick={() => addToCart(item.product)} className="w-8 h-8 rounded bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
+                      <button onClick={() => addToCart(item.product, item.vendorUsername, item.vendorName)} className="w-8 h-8 rounded bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -660,7 +826,42 @@ export function ClientePanel() {
         )}
       </AnimatePresence>
 
-      {/* Payment Modal */}
+      {/* ═══════════════ Vendor Conflict Modal ═══════════════ */}
+      <AnimatePresence>
+        {showVendorConflict && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md px-4"
+            onClick={() => setShowVendorConflict(null)}>
+            <motion.div
+              initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.85, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#12121a] border border-[#ff9f00]/30 rounded-2xl p-5 w-full max-w-sm shadow-[0_0_40px_rgba(255,159,0,0.15)]">
+              <div className="text-center mb-4">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[#ff9f00]/15 mb-3">
+                  <AlertTriangle className="w-6 h-6 text-[#ff9f00]" />
+                </div>
+                <h3 className="text-white font-bold text-base">Carrinho de outro vendedor</h3>
+                <p className="text-gray-400 text-sm mt-1">
+                  Seu carrinho tem itens de <span className="text-[#00f0ff] font-semibold">{cartVendorName}</span>.
+                  Deseja limpar e adicionar de <span className="text-[#00f0ff] font-semibold">{showVendorConflict.vendorName}</span>?
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowVendorConflict(null)}
+                  className="flex-1 py-3 bg-[#1f1f2e] text-gray-300 font-semibold rounded-xl text-sm">
+                  Manter
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.95 }} onClick={handleVendorConflictSwitch}
+                  className="flex-1 py-3 bg-gradient-to-r from-[#ff9f00] to-[#ff006e] text-white font-bold rounded-xl text-sm">
+                  Trocar
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════ Payment Modal ═══════════════ */}
       <AnimatePresence>
         {showPaymentModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-end sm:items-center justify-center">
@@ -820,7 +1021,7 @@ export function ClientePanel() {
                     <LogOut className="w-7 h-7 text-[#ff006e]" />
                   </motion.div>
                   <h3 className="text-white font-bold text-lg">Sair do Painel?</h3>
-                  <p className="text-gray-400 text-sm mt-1">Você será desconectado</p>
+                  <p className="text-gray-400 text-sm mt-1">Voce sera desconectado</p>
                 </div>
                 <div className="flex gap-3">
                   <motion.button

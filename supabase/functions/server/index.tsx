@@ -719,7 +719,7 @@ app.post("/make-server-42377006/register", async (c) => {
     }
     
     // Criar usuário
-    const newUser = {
+    const newUser: Record<string, any> = {
       username,
       pin,
       name,
@@ -731,6 +731,11 @@ app.post("/make-server-42377006/register", async (c) => {
       createdBy: createdByUser || "system",
       inviteCodeUsed: usedInviteCode,
     };
+
+    // For clients, initialize linkedVendors array with the creator vendor
+    if (role === "cliente" && createdByUser && createdByUser !== "system") {
+      newUser.linkedVendors = [createdByUser];
+    }
     
     console.log("💾 Salvando usuário:", newUser);
     await kv.set(`user:${username}`, newUser);
@@ -1165,6 +1170,12 @@ app.post("/make-server-42377006/link-user", async (c) => {
     }
     
     const creatorUsername = codeObj.generatedBy;
+
+    // Check if already linked to this vendor
+    const existingLinked = user.linkedVendors || [];
+    if (existingLinked.includes(creatorUsername)) {
+      return c.json({ success: false, error: "Você já está vinculado a este vendedor" }, 400);
+    }
     
     // Marcar código como usado
     codes[codeIndex].used = true;
@@ -1172,8 +1183,21 @@ app.post("/make-server-42377006/link-user", async (c) => {
     codes[codeIndex].usedAt = new Date().toISOString();
     await kv.set(`codes:${type}`, codes);
     
-    // Atualizar createdBy do usuário
-    user.createdBy = creatorUsername;
+    // Update linkedVendors array (supports multiple vendors)
+    const linkedVendors = user.linkedVendors || [];
+    // If user had a createdBy but no linkedVendors yet, seed with existing createdBy
+    if (user.createdBy && user.createdBy !== "system" && user.createdBy !== "direct" && !linkedVendors.includes(user.createdBy)) {
+      linkedVendors.push(user.createdBy);
+    }
+    if (!linkedVendors.includes(creatorUsername)) {
+      linkedVendors.push(creatorUsername);
+    }
+    user.linkedVendors = linkedVendors;
+
+    // Keep createdBy as the first/original vendor for backward compatibility
+    if (!user.createdBy || user.createdBy === "system" || user.createdBy === "direct") {
+      user.createdBy = creatorUsername;
+    }
     await kv.set(`user:${username}`, user);
     
     // Atualizar lista created_by do criador
@@ -1187,15 +1211,53 @@ app.post("/make-server-42377006/link-user", async (c) => {
     const creator = await kv.get(`user:${creatorUsername}`);
     const { pin: _pin, ...creatorWithoutPin } = creator || {};
     
-    console.log(`✅ Usuário ${username} vinculado ao vendedor ${creatorUsername}`);
+    console.log(`✅ Usuário ${username} vinculado ao vendedor ${creatorUsername}. Total: ${linkedVendors.length}`);
     
     return c.json({ 
       success: true, 
-      message: `Vinculado com sucesso a ${creatorUsername}`,
-      creator: creatorWithoutPin
+      message: `Vinculado com sucesso a ${creatorWithoutPin.name || creatorUsername}`,
+      creator: creatorWithoutPin,
+      linkedVendors
     });
   } catch (error) {
     console.error("❌ Erro ao vincular usuário:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== LINKED VENDORS (multiple vendors for a client) ====================
+app.get("/make-server-42377006/users/:username/linked-vendors", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const user = await kv.get(`user:${username}`);
+    if (!user) {
+      return c.json({ success: false, error: "Usuário não encontrado" }, 404);
+    }
+
+    // Build linked vendors list from linkedVendors array OR fall back to createdBy
+    let vendorUsernames: string[] = user.linkedVendors || [];
+    
+    // Backward compat: if no linkedVendors but has createdBy, use that
+    if (vendorUsernames.length === 0 && user.createdBy && user.createdBy !== "system" && user.createdBy !== "direct") {
+      vendorUsernames = [user.createdBy];
+      user.linkedVendors = vendorUsernames;
+      await kv.set(`user:${username}`, user);
+    }
+
+    const vendors: any[] = [];
+    for (const vu of vendorUsernames) {
+      const vendor = await kv.get(`user:${vu}`);
+      if (vendor) {
+        const { pin, ...vendorWithoutPin } = vendor;
+        const presence = await kv.get(`presence:${vu}`);
+        const isOnline = !!(presence && (Date.now() - presence.lastSeen) < 30000);
+        vendors.push({ ...vendorWithoutPin, isOnline });
+      }
+    }
+
+    return c.json({ success: true, vendors });
+  } catch (error) {
+    console.error("❌ Erro ao buscar vendedores vinculados:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });

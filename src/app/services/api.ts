@@ -143,6 +143,11 @@ export async function repairLinks() {
   return fetchAPI('/repair-links', { method: 'POST' });
 }
 
+// Buscar todos os vendedores vinculados a um cliente (com status online)
+export async function getLinkedVendors(username: string) {
+  return fetchAPI(`/users/${username}/linked-vendors`);
+}
+
 // Vincular um usuário existente a um vendedor via código de convite
 export async function linkUser(username: string, inviteCode: string) {
   return fetchAPI('/link-user', {
