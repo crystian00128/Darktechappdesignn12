@@ -612,10 +612,13 @@ export function useCallSystem(currentUsername: string) {
         });
       }
     } catch (err: any) {
-      // Silence transient network errors
+      // Silence transient network errors and timeouts
       if (
         err?.name === 'AbortError' ||
-        (err instanceof TypeError && err.message?.includes('Failed to fetch'))
+        err?._aborted ||
+        (err instanceof TypeError && err.message?.includes('Failed to fetch')) ||
+        (typeof err === 'string' && err.includes('timeout')) ||
+        (err?.message && /timeout|aborted/i.test(err.message))
       ) {
         return;
       }

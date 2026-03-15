@@ -56,6 +56,8 @@ export function ClientePanel() {
   const [pixError, setPixError] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [feePreview, setFeePreview] = useState<any>(null);
+  const [loadingFees, setLoadingFees] = useState(false);
   const pixPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
@@ -117,6 +119,21 @@ export function ClientePanel() {
   const cartTotal = cart.reduce((sum, c) => sum + c.product.price * c.qty, 0);
   const cartCount = cart.reduce((sum, c) => sum + c.qty, 0);
 
+  // Load fee preview when cart changes
+  useEffect(() => {
+    if (cart.length > 0 && vendedor?.username && cartTotal > 0) {
+      setLoadingFees(true);
+      api.getOrderFeePreview(vendedor.username, cartTotal)
+        .then((res) => {
+          if (res.success) setFeePreview(res.fees);
+        })
+        .catch(() => {})
+        .finally(() => setLoadingFees(false));
+    } else {
+      setFeePreview(null);
+    }
+  }, [cartTotal, vendedor?.username, cart.length]);
+
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setShowPaymentModal(true);
@@ -132,6 +149,7 @@ export function ClientePanel() {
         items: cart.map((c) => ({ name: c.product.name, price: c.product.price, qty: c.qty, productId: c.product.id })),
         total: cartTotal,
         deliveryAddress,
+        paymentSource: "client",
       });
 
       if (!orderRes.success) throw new Error("Erro ao criar pedido");
@@ -257,6 +275,7 @@ export function ClientePanel() {
   };
 
   const statusLabels: Record<string, { label: string; color: string }> = {
+    pending_payment: { label: "Aguardando Pagamento", color: "#f59e0b" },
     pending: { label: "Pendente", color: "#ff9f00" },
     accepted: { label: "Aceito", color: "#00f0ff" },
     preparing: { label: "Preparando", color: "#8b5cf6" },
@@ -382,52 +401,97 @@ export function ClientePanel() {
 
           {/* Loja */}
           {activeTab === "loja" && (
-            <motion.div key="loja" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4 h-full overflow-y-auto pb-16">
-              <h2 className="text-white font-bold text-lg">
-                {vendedor ? `Loja de ${vendedor.name}` : "Loja"}
-              </h2>
-              {!vendedor ? (
-                <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
-                  <p className="text-gray-400 text-sm">Conecte-se a um vendedor para ver os produtos</p>
-                </div>
-              ) : products.length === 0 ? (
-                <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
-                  <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-400 text-sm">O vendedor ainda nao adicionou produtos</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {products.map((product) => {
-                    const inCart = cart.find((c) => c.product.id === product.id);
-                    return (
-                      <motion.div key={product.id} whileTap={{ scale: 0.97 }}
-                        className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-3 hover:border-[#00f0ff]/50 transition-all">
-                        <div className="w-full aspect-square bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/20 rounded-xl mb-3 flex items-center justify-center">
-                          <Package className="w-10 h-10 text-[#00f0ff]" />
-                        </div>
-                        <h3 className="text-white font-bold text-sm mb-1 truncate">{product.name}</h3>
-                        <p className="text-[#00ff41] font-bold text-lg mb-2">R$ {Number(product.price).toFixed(2)}</p>
-                        {inCart ? (
-                          <div className="flex items-center justify-between">
-                            <button onClick={() => removeFromCart(product.id)} className="w-9 h-9 rounded-lg bg-[#1f1f2e] text-white flex items-center justify-center">
-                              <Minus className="w-4 h-4" />
-                            </button>
-                            <span className="text-white font-bold text-base">{inCart.qty}</span>
-                            <button onClick={() => addToCart(product)} className="w-9 h-9 rounded-lg bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
-                              <Plus className="w-4 h-4" />
-                            </button>
+            <motion.div key="loja" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full flex flex-col">
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">
+                <h2 className="text-white font-bold text-lg">
+                  {vendedor ? `Loja de ${vendedor.name}` : "Loja"}
+                </h2>
+                {!vendedor ? (
+                  <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
+                    <p className="text-gray-400 text-sm">Conecte-se a um vendedor para ver os produtos</p>
+                  </div>
+                ) : products.length === 0 ? (
+                  <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
+                    <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                    <p className="text-gray-400 text-sm">O vendedor ainda nao adicionou produtos</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {products.map((product) => {
+                      const inCart = cart.find((c) => c.product.id === product.id);
+                      return (
+                        <motion.div key={product.id} whileTap={{ scale: 0.97 }}
+                          className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-3 hover:border-[#00f0ff]/50 transition-all">
+                          <div className="w-full aspect-square bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/20 rounded-xl mb-3 flex items-center justify-center">
+                            <Package className="w-10 h-10 text-[#00f0ff]" />
                           </div>
-                        ) : (
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => addToCart(product)}
-                            className="w-full py-2.5 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white rounded-xl font-medium text-sm">
-                            Adicionar
-                          </motion.button>
-                        )}
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              )}
+                          <h3 className="text-white font-bold text-sm mb-1 truncate">{product.name}</h3>
+                          <p className="text-[#00ff41] font-bold text-lg mb-2">R$ {Number(product.price).toFixed(2)}</p>
+                          {inCart ? (
+                            <div className="flex items-center justify-between">
+                              <button onClick={() => removeFromCart(product.id)} className="w-9 h-9 rounded-lg bg-[#1f1f2e] text-white flex items-center justify-center">
+                                <Minus className="w-4 h-4" />
+                              </button>
+                              <span className="text-white font-bold text-base">{inCart.qty}</span>
+                              <button onClick={() => addToCart(product)} className="w-9 h-9 rounded-lg bg-[#00f0ff]/20 text-[#00f0ff] flex items-center justify-center">
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => addToCart(product)}
+                              className="w-full py-2.5 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white rounded-xl font-medium text-sm">
+                              Adicionar
+                            </motion.button>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Floating Realizar Pagamento Bar */}
+              <AnimatePresence>
+                {cartCount > 0 && (
+                  <motion.div
+                    initial={{ y: 100, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 100, opacity: 0 }}
+                    transition={{ type: "spring", damping: 20, stiffness: 300 }}
+                    className="fixed bottom-16 left-0 right-0 z-40 px-4 pb-3"
+                  >
+                    <motion.div
+                      className="relative overflow-hidden rounded-2xl"
+                      animate={{ boxShadow: ["0 0 20px rgba(0,240,255,0.15)", "0 0 40px rgba(0,240,255,0.3)", "0 0 20px rgba(0,240,255,0.15)"] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    >
+                      <div className="bg-[#0c0c14]/95 backdrop-blur-xl border border-[#00f0ff]/30 rounded-2xl p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-[#00f0ff]/15 flex items-center justify-center">
+                              <ShoppingCart className="w-4 h-4 text-[#00f0ff]" />
+                            </div>
+                            <div>
+                              <p className="text-white text-sm font-semibold">{cartCount} {cartCount === 1 ? "item" : "itens"}</p>
+                              <p className="text-gray-400 text-[11px]">no carrinho</p>
+                            </div>
+                          </div>
+                          <p className="text-[#00ff41] font-bold text-xl">R$ {cartTotal.toFixed(2)}</p>
+                        </div>
+                        <motion.button
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => { sfx.playClick(); setShowCart(true); }}
+                          className="w-full py-3.5 rounded-xl font-bold text-base text-white flex items-center justify-center gap-2"
+                          style={{ background: "linear-gradient(135deg, #00f0ff, #8b5cf6, #ff00ff)" }}
+                        >
+                          <QrCode className="w-5 h-5" />
+                          Realizar Pagamento
+                        </motion.button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           )}
 
@@ -551,13 +615,44 @@ export function ClientePanel() {
                 <input type="text" value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
                   placeholder="Endereco de entrega..."
                   className="w-full px-4 py-3 bg-[#1f1f2e] border border-[#2a2a3e] rounded-xl text-white focus:outline-none focus:border-[#00f0ff] text-base" />
+                
+                {/* Fee Breakdown */}
+                {feePreview && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                    className="bg-[#0a0a12] border border-[#1f1f2e]/50 rounded-xl p-3 space-y-1.5">
+                    <p className="text-gray-500 text-[11px] uppercase tracking-wider font-medium mb-2">Distribuicao do Pagamento</p>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[#ff006e]">Taxa Admin ({feePreview.adminRate}% + R$0,99)</span>
+                      <span className="text-[#ff006e] font-medium">R$ {feePreview.adminTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[#ff9f00]">Taxa Motorista ({feePreview.driverPercent}% + R${feePreview.driverFixa.toFixed(2)})</span>
+                      <span className="text-[#ff9f00] font-medium">R$ {feePreview.driverTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[#00ff41]">Lucro Vendedor</span>
+                      <span className="text-[#00ff41] font-medium">R$ {feePreview.vendorProfit.toFixed(2)}</span>
+                    </div>
+                    <div className="border-t border-[#1f1f2e]/30 my-1" />
+                  </motion.div>
+                )}
+                {loadingFees && (
+                  <div className="flex items-center justify-center py-2 gap-2">
+                    <Loader className="w-3.5 h-3.5 text-gray-500 animate-spin" />
+                    <span className="text-gray-500 text-xs">Calculando taxas...</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-lg">
                   <span className="text-white font-bold">Total</span>
                   <span className="text-[#00ff41] font-bold">R$ {cartTotal.toFixed(2)}</span>
                 </div>
-                <motion.button whileTap={{ scale: 0.98 }} onClick={handleCheckout}
-                  className="w-full py-4 bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] text-white font-bold rounded-xl text-base">
-                  Finalizar Pedido
+                <motion.button whileTap={{ scale: 0.97 }} onClick={handleCheckout}
+                  className="w-full py-4 rounded-xl font-bold text-base text-white flex items-center justify-center gap-2"
+                  style={{ background: "linear-gradient(135deg, #00f0ff, #8b5cf6, #ff00ff)" }}
+                >
+                  <QrCode className="w-5 h-5" />
+                  Pagar com PIX
                 </motion.button>
               </div>
             </motion.div>
@@ -593,11 +688,15 @@ export function ClientePanel() {
               {paymentStatus === "pix_ready" && pixInvoice && (
                 <div className="space-y-4">
                   {pixInvoice.payment?.qrCodeImageUrl ? (
-                    <div className="w-48 h-48 mx-auto bg-white rounded-2xl p-3 flex items-center justify-center shadow-[0_0_40px_rgba(0,240,255,0.15)]">
+                    <motion.div
+                      className="w-52 h-52 mx-auto bg-white rounded-2xl p-3 flex items-center justify-center"
+                      animate={{ boxShadow: ["0 0 20px rgba(0,240,255,0.1)", "0 0 40px rgba(0,240,255,0.25)", "0 0 20px rgba(0,240,255,0.1)"] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    >
                       <img src={pixInvoice.payment.qrCodeImageUrl} alt="QR Code PIX" className="w-full h-full" />
-                    </div>
+                    </motion.div>
                   ) : (
-                    <div className="w-48 h-48 mx-auto bg-white rounded-2xl p-4 flex items-center justify-center">
+                    <div className="w-52 h-52 mx-auto bg-white rounded-2xl p-4 flex items-center justify-center">
                       <QrCode className="w-full h-full text-black" />
                     </div>
                   )}
@@ -605,6 +704,25 @@ export function ClientePanel() {
                     <p className="text-white font-bold text-2xl">R$ {(pixInvoice.amount || cartTotal).toFixed(2)}</p>
                     <p className="text-gray-400 text-sm mt-1">Escaneie o QR Code ou copie o codigo PIX</p>
                   </div>
+
+                  {/* Fee breakdown in payment modal */}
+                  {feePreview && (
+                    <div className="bg-[#0a0a12]/80 border border-[#1f1f2e]/40 rounded-xl p-3 space-y-1.5">
+                      <p className="text-gray-500 text-[10px] uppercase tracking-wider font-medium">Distribuicao</p>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-[#ff006e]/80">Admin ({feePreview.adminRate}% + R$0,99)</span>
+                        <span className="text-[#ff006e] font-medium">R$ {feePreview.adminTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-[#ff9f00]/80">Motorista ({feePreview.driverPercent}% + R${feePreview.driverFixa.toFixed(2)})</span>
+                        <span className="text-[#ff9f00] font-medium">R$ {feePreview.driverTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-[#00ff41]/80">Vendedor</span>
+                        <span className="text-[#00ff41] font-medium">R$ {feePreview.vendorProfit.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
                   {pixInvoice.payment?.qrCode && (
                     <button onClick={() => handleCopyPix(pixInvoice.payment.qrCode)}
                       className="w-full flex items-center gap-2 px-4 py-3 bg-[#1f1f2e] border border-[#2a2a3e] rounded-xl group">
@@ -639,8 +757,15 @@ export function ClientePanel() {
                     className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#00ff41]/20 mb-4">
                     <Check className="w-8 h-8 text-[#00ff41]" />
                   </motion.div>
-                  <p className="text-[#00ff41] font-bold text-lg">Pedido Criado com Sucesso!</p>
-                  <p className="text-gray-400 text-sm mt-2">R$ {(pixInvoice?.amount || cartTotal).toFixed(2)}</p>
+                  <p className="text-[#00ff41] font-bold text-lg">Pagamento Confirmado!</p>
+                  <p className="text-gray-400 text-sm mt-1">R$ {(pixInvoice?.amount || cartTotal).toFixed(2)}</p>
+                  <p className="text-gray-500 text-xs mt-2">Seu pedido foi enviado ao vendedor</p>
+                  <div className="mt-3 flex items-center justify-center gap-1.5">
+                    <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 1, repeat: 2 }}>
+                      <Package className="w-4 h-4 text-[#00f0ff]" />
+                    </motion.div>
+                    <span className="text-[#00f0ff] text-xs font-medium">Acompanhe na aba Pedidos</span>
+                  </div>
                 </div>
               )}
 

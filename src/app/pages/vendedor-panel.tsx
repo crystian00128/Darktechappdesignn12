@@ -1337,7 +1337,7 @@ export function VendedorPanel() {
     }
   }, []);
 
-  const pendingOrdersCount = orders.filter((o: any) => o.status === "pending").length;
+  const pendingOrdersCount = orders.filter((o: any) => o.status === "pending" || o.status === "pending_payment").length;
   const menuItems = [
     { icon: <LayoutDashboard className="w-5 h-5" />, label: "Dashboard", id: "dashboard" },
     { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread || undefined },
@@ -1426,16 +1426,27 @@ export function VendedorPanel() {
   // ─── Filtered orders by date ───
   const filteredOrders = useMemo(() => {
     return orders.filter((o: any) => {
-      if (o.status === "cancelled") return false;
+      if (o.status === "cancelled" || o.status === "pending_payment") return false;
       const d = (o.createdAt || "").split("T")[0];
       return d >= dateFilterStart && d <= dateFilterEnd;
     });
   }, [orders, dateFilterStart, dateFilterEnd]);
 
   const filteredTotalSales = useMemo(() => filteredOrders.reduce((s: number, o: any) => s + (o.total || 0), 0), [filteredOrders]);
-  const filteredAdminTax = useMemo(() => parseFloat((filteredTotalSales * (adminCommissionRate / 100)).toFixed(2)), [filteredTotalSales, adminCommissionRate]);
+  // Admin tax: percentage + R$0.99 fixed fee per order (for client purchases with feeBreakdown, use stored values)
+  const filteredAdminTax = useMemo(() => {
+    return filteredOrders.reduce((sum: number, o: any) => {
+      if (o.feeBreakdown?.adminTotal) return sum + o.feeBreakdown.adminTotal;
+      // Fallback: percentage only + R$0.99 fixed fee for orders with paymentSource=client
+      const percTax = (o.total || 0) * (adminCommissionRate / 100);
+      const fixedFee = o.paymentSource === "client" ? 0.99 : 0;
+      return sum + parseFloat((percTax + fixedFee).toFixed(2));
+    }, 0);
+  }, [filteredOrders, adminCommissionRate]);
 
   const calcDriverCommissionForOrder = useCallback((order: any) => {
+    // Use stored feeBreakdown from client purchases first
+    if (order.feeBreakdown?.driverTotal) return order.feeBreakdown.driverTotal;
     const driverUser = order.driverUsername;
     if (!driverUser) return 0;
     const cfg = driverCommissionConfigs[driverUser] || { taxaFixa: 5, taxaPercent: 8 };
@@ -1536,6 +1547,7 @@ export function VendedorPanel() {
   };
 
   const statusLabels: Record<string, { label: string; color: string }> = {
+    pending_payment: { label: "Aguardando PIX", color: "#f59e0b" },
     pending: { label: "Pendente", color: "#ff9f00" }, accepted: { label: "Aceito", color: "#00f0ff" },
     preparing: { label: "Preparando", color: "#8b5cf6" }, delivering: { label: "Enviado", color: "#ff9f00" },
     driver_accepted: { label: "Motorista Aceitou", color: "#00f0ff" }, on_the_way: { label: "A Caminho", color: "#ff00ff" },
@@ -1867,22 +1879,106 @@ export function VendedorPanel() {
           {activeTab === "pedidos" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               {/* Order Stats */}
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-5 gap-1.5">
                 {[
+                  { label: "Aguard. PIX", count: orders.filter((o: any) => o.status === "pending_payment").length, color: "#f59e0b", icon: <QrCode className="w-3.5 h-3.5" /> },
                   { label: "Pendentes", count: orders.filter((o: any) => o.status === "pending").length, color: "#ff9f00", icon: <Clock className="w-3.5 h-3.5" /> },
                   { label: "Aceitos", count: orders.filter((o: any) => o.status === "accepted" || o.status === "preparing").length, color: "#00f0ff", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
-                  { label: "Entregando", count: orders.filter((o: any) => o.status === "delivering").length, color: "#ff00ff", icon: <Truck className="w-3.5 h-3.5" /> },
+                  { label: "Entregando", count: orders.filter((o: any) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status)).length, color: "#ff00ff", icon: <Truck className="w-3.5 h-3.5" /> },
                   { label: "Entregues", count: orders.filter((o: any) => o.status === "delivered").length, color: "#00ff41", icon: <Check className="w-3.5 h-3.5" /> },
                 ].map((stat) => (
                   <motion.div key={stat.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-2.5 text-center"
+                    className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-2 text-center"
                   >
                     <div className="flex items-center justify-center mb-1" style={{ color: stat.color }}>{stat.icon}</div>
-                    <p className="text-white font-bold text-lg" style={{ textShadow: `0 0 8px ${stat.color}30` }}>{stat.count}</p>
-                    <p className="text-gray-500 text-[9px] uppercase tracking-wider">{stat.label}</p>
+                    <p className="text-white font-bold text-base" style={{ textShadow: `0 0 8px ${stat.color}30` }}>{stat.count}</p>
+                    <p className="text-gray-500 text-[8px] uppercase tracking-wider leading-tight">{stat.label}</p>
                   </motion.div>
                 ))}
               </div>
+
+              {/* Awaiting Payment (pending_payment) — non-actionable, just info */}
+              {orders.filter((o: any) => o.status === "pending_payment").length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <motion.div animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 2, repeat: Infinity }}>
+                      <QrCode className="w-4 h-4 text-[#f59e0b]" />
+                    </motion.div>
+                    <h3 className="text-white font-bold text-sm">Aguardando Pagamento PIX</h3>
+                    <motion.span animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
+                      className="ml-auto px-2 py-0.5 bg-[#f59e0b]/20 text-[#f59e0b] rounded-full text-[10px] font-bold">
+                      {orders.filter((o: any) => o.status === "pending_payment").length}
+                    </motion.span>
+                  </div>
+                  <div className="space-y-2">
+                    {orders.filter((o: any) => o.status === "pending_payment").map((order: any) => (
+                      <motion.div key={order.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
+                        className="relative overflow-hidden bg-[#12121a]/90 border border-[#f59e0b]/20 rounded-2xl"
+                      >
+                        <motion.div className="absolute top-0 left-0 right-0 h-[2px]"
+                          style={{ background: "linear-gradient(90deg, transparent, #f59e0b, transparent)" }}
+                          animate={{ opacity: [0.3, 0.8, 0.3] }} transition={{ duration: 2, repeat: Infinity }}
+                        />
+                        <div className="p-3.5">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-[#f59e0b]/15 flex items-center justify-center">
+                                <QrCode className="w-4 h-4 text-[#f59e0b]" />
+                              </div>
+                              <div>
+                                <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
+                                <p className="text-gray-400 text-[10px]">@{order.clientUsername}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f59e0b]/10 rounded-full border border-[#f59e0b]/20">
+                              <motion.div animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.5, repeat: Infinity }}
+                                className="w-2 h-2 rounded-full bg-[#f59e0b]" />
+                              <span className="text-[#f59e0b] font-bold text-[9px]">AGUARDANDO PIX</span>
+                            </div>
+                          </div>
+                          <div className="bg-[#0a0a12]/60 rounded-xl p-2.5 mb-2">
+                            {order.items?.map((item: any, i: number) => (
+                              <div key={i} className="flex justify-between text-[11px] py-0.5">
+                                <span className="text-gray-300 truncate mr-2">{item.name} x{item.qty || 1}</span>
+                                <span className="text-white font-medium shrink-0">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
+                              </div>
+                            ))}
+                            <div className="flex justify-between border-t border-[#1f1f2e]/60 pt-1.5 mt-1.5">
+                              <span className="text-gray-400 text-[11px] font-medium">Total</span>
+                              <span className="text-[#f59e0b] font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                          {/* Fee breakdown if available */}
+                          {order.feeBreakdown && (
+                            <div className="bg-[#0a0a12]/40 rounded-lg p-2 space-y-1 mb-2">
+                              <p className="text-gray-600 text-[9px] uppercase tracking-wider font-medium">Distribuição após pagamento</p>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#ff006e]/70">Admin ({order.feeBreakdown.adminRate}% + R$0,99)</span>
+                                <span className="text-[#ff006e] font-medium">R$ {order.feeBreakdown.adminTotal.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#ff9f00]/70">Motorista ({order.feeBreakdown.driverPercent}% + R${order.feeBreakdown.driverFixa.toFixed(2)})</span>
+                                <span className="text-[#ff9f00] font-medium">R$ {order.feeBreakdown.driverTotal.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#00ff41]/70">Seu Lucro</span>
+                                <span className="text-[#00ff41] font-medium">R$ {order.feeBreakdown.vendorProfit.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2 px-2 py-2 bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-xl">
+                            <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                              className="w-4 h-4 border-2 border-[#f59e0b]/30 border-t-[#f59e0b] rounded-full shrink-0" />
+                            <p className="text-[#f59e0b]/80 text-[10px] font-medium">
+                              Cliente está realizando o pagamento PIX. O pedido aparecerá como "Novo" após confirmação.
+                            </p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Pending Orders (need attention) */}
               {orders.filter((o: any) => o.status === "pending").length > 0 && (
@@ -1938,10 +2034,33 @@ export function VendedorPanel() {
                               </div>
                             ))}
                             <div className="flex justify-between border-t border-[#1f1f2e]/60 pt-1.5 mt-1.5">
-                              <span className="text-gray-400 text-[11px] font-medium">Total</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-gray-400 text-[11px] font-medium">Total</span>
+                                {order.paymentStatus === "paid" && (
+                                  <span className="px-1.5 py-0.5 bg-[#00ff41]/10 text-[#00ff41] text-[8px] font-bold rounded border border-[#00ff41]/20">PIX PAGO</span>
+                                )}
+                              </div>
                               <span className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</span>
                             </div>
                           </div>
+                          {/* Fee breakdown for client purchases */}
+                          {order.feeBreakdown && (
+                            <div className="bg-[#0a0a12]/40 rounded-lg p-2 space-y-1 mb-2.5">
+                              <p className="text-gray-600 text-[9px] uppercase tracking-wider font-medium">Distribuição</p>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#ff006e]/70">Admin</span>
+                                <span className="text-[#ff006e] font-medium">R$ {order.feeBreakdown.adminTotal.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#ff9f00]/70">Motorista</span>
+                                <span className="text-[#ff9f00] font-medium">R$ {order.feeBreakdown.driverTotal.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-[#00ff41]/70">Seu Lucro</span>
+                                <span className="text-[#00ff41] font-bold">R$ {order.feeBreakdown.vendorProfit.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <motion.button whileTap={{ scale: 0.95 }}
                               onClick={() => handleUpdateOrderStatus(order, "cancelled")}
@@ -2029,13 +2148,23 @@ export function VendedorPanel() {
                             {/* Order Items Summary */}
                             <div className="bg-[#0a0a12]/60 rounded-lg p-2 mb-2.5">
                               <div className="flex justify-between text-[11px]">
-                                <span className="text-gray-400">{order.items?.length || 0} item(ns)</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-gray-400">{order.items?.length || 0} item(ns)</span>
+                                  {order.paymentStatus === "paid" && (
+                                    <span className="px-1 py-0.5 bg-[#00ff41]/10 text-[#00ff41] text-[7px] font-bold rounded border border-[#00ff41]/20">PIX</span>
+                                  )}
+                                </div>
                                 <span className="text-white font-bold">R$ {(order.total || 0).toFixed(2)}</span>
                               </div>
                               {order.driverUsername && (
                                 <div className="flex items-center gap-1 mt-1">
                                   <Truck className="w-3 h-3 text-[#ff00ff]" />
                                   <span className="text-[#ff00ff] text-[10px] font-medium">@{order.driverUsername}</span>
+                                </div>
+                              )}
+                              {order.feeBreakdown && (
+                                <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-[#1f1f2e]/30">
+                                  <span className="text-[#00ff41] text-[9px] font-medium">Seu lucro: R$ {order.feeBreakdown.vendorProfit.toFixed(2)}</span>
                                 </div>
                               )}
                             </div>

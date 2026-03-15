@@ -4,7 +4,7 @@ const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-4237
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort('Request timeout'), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   // If caller provided a signal, link it to our internal controller
   if (options.signal) {
@@ -37,7 +37,7 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   } catch (err: any) {
     // Silently swallow AbortErrors — these are expected from timeouts,
     // component unmounts, and rapid polling cancellations
-    if (err?.name === 'AbortError') {
+    if (err?.name === 'AbortError' || controller.signal.aborted) {
       return { success: false, _aborted: true };
     }
     throw err;
@@ -268,7 +268,11 @@ export async function deleteProduct(vendorUsername: string, productId: string) {
 }
 
 // ==================== PEDIDOS ====================
-export async function createOrder(data: { clientUsername: string; vendorUsername: string; items: any[]; total: number; deliveryAddress?: string }) {
+export async function getOrderFeePreview(vendorUsername: string, total: number) {
+  return fetchAPI('/orders/fee-preview', { method: 'POST', body: JSON.stringify({ vendorUsername, total }) });
+}
+
+export async function createOrder(data: { clientUsername: string; vendorUsername: string; items: any[]; total: number; deliveryAddress?: string; paymentSource?: string }) {
   return fetchAPI('/orders', {
     method: 'POST',
     body: JSON.stringify(data),

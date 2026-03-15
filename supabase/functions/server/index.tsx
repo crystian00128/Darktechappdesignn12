@@ -1501,13 +1501,102 @@ app.delete("/make-server-42377006/products/:vendorUsername/:productId", async (c
   }
 });
 
+// ==================== FEE PREVIEW ====================
+app.post("/make-server-42377006/orders/fee-preview", async (c) => {
+  try {
+    const { vendorUsername, total } = await c.req.json();
+    if (!vendorUsername || !total) {
+      return c.json({ success: false, error: "vendorUsername e total obrigatórios" }, 400);
+    }
+    const vendor = await kv.get(`user:${vendorUsername}`);
+    const adminRate = vendor?.adminCommissionRate !== undefined ? Number(vendor.adminCommissionRate) : 15;
+    const adminFixed = 0.99;
+    const totalNum = Number(total);
+    const adminPercValue = (totalNum * adminRate) / 100;
+    const adminTotal = adminPercValue + adminFixed;
+
+    let driverFixa = 5;
+    let driverPercent = 8;
+    const allDriverConfigs = await kv.getByPrefix(`driver_config:${vendorUsername}:`);
+    if (allDriverConfigs && allDriverConfigs.length > 0) {
+      const dConfig = allDriverConfigs[0];
+      driverFixa = dConfig?.taxaFixa !== undefined ? Number(dConfig.taxaFixa) : 5;
+      driverPercent = dConfig?.taxaPercent !== undefined ? Number(dConfig.taxaPercent) : 8;
+    }
+    const driverPercValue = (totalNum * driverPercent) / 100;
+    const driverTotal = driverPercValue + driverFixa;
+    const vendorProfit = Math.max(0, totalNum - adminTotal - driverTotal);
+
+    return c.json({
+      success: true,
+      fees: {
+        adminRate,
+        adminFixed,
+        adminPercValue: Math.round(adminPercValue * 100) / 100,
+        adminTotal: Math.round(adminTotal * 100) / 100,
+        driverFixa,
+        driverPercent,
+        driverPercValue: Math.round(driverPercValue * 100) / 100,
+        driverTotal: Math.round(driverTotal * 100) / 100,
+        vendorProfit: Math.round(vendorProfit * 100) / 100,
+        orderTotal: totalNum,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Erro no fee preview:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
 // ==================== PEDIDOS ====================
 app.post("/make-server-42377006/orders", async (c) => {
   try {
-    const { clientUsername, vendorUsername, items, total, deliveryAddress } = await c.req.json();
+    const { clientUsername, vendorUsername, items, total, deliveryAddress, paymentSource } = await c.req.json();
     if (!clientUsername || !vendorUsername || !items || !total) {
       return c.json({ success: false, error: "Dados incompletos" }, 400);
     }
+
+    // Calculate fee breakdown for client purchases
+    let feeBreakdown: any = null;
+    if (paymentSource === "client") {
+      try {
+        const vendor = await kv.get(`user:${vendorUsername}`);
+        const adminRate = vendor?.adminCommissionRate !== undefined ? Number(vendor.adminCommissionRate) : 15;
+        const adminFixed = 0.99;
+        const totalNum = Number(total);
+        const adminPercValue = (totalNum * adminRate) / 100;
+        const adminTotal = adminPercValue + adminFixed;
+
+        // Get driver commission config (use default if not configured)
+        let driverFixa = 5;
+        let driverPercent = 8;
+        const allDriverConfigs = await kv.getByPrefix(`driver_config:${vendorUsername}:`);
+        if (allDriverConfigs && allDriverConfigs.length > 0) {
+          const dConfig = allDriverConfigs[0];
+          driverFixa = dConfig?.taxaFixa !== undefined ? Number(dConfig.taxaFixa) : 5;
+          driverPercent = dConfig?.taxaPercent !== undefined ? Number(dConfig.taxaPercent) : 8;
+        }
+        const driverPercValue = (totalNum * driverPercent) / 100;
+        const driverTotal = driverPercValue + driverFixa;
+        const vendorProfit = Math.max(0, totalNum - adminTotal - driverTotal);
+
+        feeBreakdown = {
+          adminRate,
+          adminFixed,
+          adminPercValue: Math.round(adminPercValue * 100) / 100,
+          adminTotal: Math.round(adminTotal * 100) / 100,
+          driverFixa,
+          driverPercent,
+          driverPercValue: Math.round(driverPercValue * 100) / 100,
+          driverTotal: Math.round(driverTotal * 100) / 100,
+          vendorProfit: Math.round(vendorProfit * 100) / 100,
+          orderTotal: totalNum,
+        };
+      } catch (e) {
+        console.log("Fee calculation error (non-critical):", e);
+      }
+    }
+
     const order = {
       id: `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       clientUsername,
@@ -1515,7 +1604,10 @@ app.post("/make-server-42377006/orders", async (c) => {
       items,
       total: Number(total),
       deliveryAddress: deliveryAddress || "",
-      status: "pending", // pending, accepted, preparing, delivering, delivered, cancelled
+      status: paymentSource === "client" ? "pending_payment" : "pending",
+      paymentStatus: paymentSource === "client" ? "awaiting" : "none",
+      paymentSource: paymentSource || "direct",
+      feeBreakdown,
       driverUsername: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1529,17 +1621,19 @@ app.post("/make-server-42377006/orders", async (c) => {
     clientOrders.push(order);
     await kv.set(`orders:client:${clientUsername}`, clientOrders);
 
-    // ═══ PUSH — Notify vendor about new order ═══
+    // ═══ PUSH — Notify vendor about new order (only after payment for client purchases) ═══
     try {
       const client = await kv.get(`user:${clientUsername}`);
       const clientName = client?.name || clientUsername;
-      sendPushToUser(vendorUsername, {
-        title: "🛒 Novo Pedido!",
-        body: `${clientName} fez um pedido de R$ ${Number(total).toFixed(2)}`,
-        tag: `order-${order.id}`,
-        data: { url: "/", type: "new_order", orderId: order.id },
-        vibrate: [300, 100, 300, 100, 300],
-      }).catch((e: any) => console.log("[PUSH] Order notify error:", e.message));
+      if (paymentSource !== "client") {
+        sendPushToUser(vendorUsername, {
+          title: "🛒 Novo Pedido!",
+          body: `${clientName} fez um pedido de R$ ${Number(total).toFixed(2)}`,
+          tag: `order-${order.id}`,
+          data: { url: "/", type: "new_order", orderId: order.id },
+          vibrate: [300, 100, 300, 100, 300],
+        }).catch((e: any) => console.log("[PUSH] Order notify error:", e.message));
+      }
     } catch (e) { /* non-critical */ }
 
     return c.json({ success: true, order });
@@ -2320,16 +2414,59 @@ app.post("/make-server-42377006/pixwave/webhook", async (c) => {
     if (event === "PAYMENT_CONFIRMED" && localInvoice?.localMetadata?.orderId) {
       const orderId = localInvoice.localMetadata.orderId;
       const vendorUsername = localInvoice.localMetadata.vendorUsername;
+      const clientUsername = localInvoice.localMetadata.clientUsername;
+      const paidAt = invoiceData.paidAt || new Date().toISOString();
+      const payerName = paymentData?.payerName || "";
+
+      // Update vendor orders
       if (vendorUsername) {
-        const orders = (await kv.get(`orders:${vendorUsername}`)) || [];
-        const orderIdx = orders.findIndex((o: any) => o.id === orderId);
-        if (orderIdx !== -1) {
-          orders[orderIdx].paymentStatus = "paid";
-          orders[orderIdx].pixPaidAt = invoiceData.paidAt || new Date().toISOString();
-          orders[orderIdx].pixPayerName = paymentData?.payerName || "";
-          await kv.set(`orders:${vendorUsername}`, orders);
-          console.log(`✅ Order ${orderId} marked as paid via PIX`);
+        const vendorOrders = (await kv.get(`orders:vendor:${vendorUsername}`)) || [];
+        const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+        if (vIdx !== -1) {
+          vendorOrders[vIdx].paymentStatus = "paid";
+          vendorOrders[vIdx].pixPaidAt = paidAt;
+          vendorOrders[vIdx].pixPayerName = payerName;
+          // If was pending_payment (client purchase), move to pending
+          if (vendorOrders[vIdx].status === "pending_payment") {
+            vendorOrders[vIdx].status = "pending";
+            vendorOrders[vIdx].updatedAt = new Date().toISOString();
+          }
+          await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+          console.log(`✅ Vendor order ${orderId} marked as paid via PIX`);
         }
+      }
+
+      // Update client orders
+      if (clientUsername) {
+        const clientOrders = (await kv.get(`orders:client:${clientUsername}`)) || [];
+        const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+        if (cIdx !== -1) {
+          clientOrders[cIdx].paymentStatus = "paid";
+          clientOrders[cIdx].pixPaidAt = paidAt;
+          clientOrders[cIdx].pixPayerName = payerName;
+          if (clientOrders[cIdx].status === "pending_payment") {
+            clientOrders[cIdx].status = "pending";
+            clientOrders[cIdx].updatedAt = new Date().toISOString();
+          }
+          await kv.set(`orders:client:${clientUsername}`, clientOrders);
+          console.log(`✅ Client order ${orderId} marked as paid via PIX`);
+        }
+      }
+
+      // Notify vendor about paid client order
+      if (vendorUsername && clientUsername) {
+        try {
+          const client = await kv.get(`user:${clientUsername}`);
+          const clientName = client?.name || clientUsername;
+          const amount = localInvoice.amount || invoiceData.price || 0;
+          sendPushToUser(vendorUsername, {
+            title: "🛒💰 Novo Pedido Pago!",
+            body: `${clientName} pagou R$ ${Number(amount).toFixed(2)} via PIX!`,
+            tag: `order-paid-${orderId}`,
+            data: { url: "/", type: "order_paid", orderId },
+            vibrate: [300, 100, 300, 100, 300],
+          }).catch(() => {});
+        } catch (e) { /* non-critical */ }
       }
     }
 

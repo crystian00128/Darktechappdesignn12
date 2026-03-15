@@ -8,7 +8,7 @@ import * as api from "../services/api";
 
 // Simplified steps for the progress tracker (merging sub-statuses)
 const TRACKER_STEPS = [
-  { key: "pending", label: "Pendente", icon: <Clock className="w-3.5 h-3.5" />, color: "#ff9f00", matches: ["pending"] },
+  { key: "pending", label: "Pendente", icon: <Clock className="w-3.5 h-3.5" />, color: "#ff9f00", matches: ["pending", "pending_payment"] },
   { key: "accepted", label: "Aceito", icon: <Check className="w-3.5 h-3.5" />, color: "#00f0ff", matches: ["accepted"] },
   { key: "preparing", label: "Preparo", icon: <Package className="w-3.5 h-3.5" />, color: "#8b5cf6", matches: ["preparing", "delivering"] },
   { key: "driver_accepted", label: "Motorista", icon: <Truck className="w-3.5 h-3.5" />, color: "#00f0ff", matches: ["driver_accepted"] },
