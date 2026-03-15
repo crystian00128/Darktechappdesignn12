@@ -1329,7 +1329,7 @@ export function VendedorPanel() {
   const pendingOrdersCount = orders.filter((o: any) => o.status === "pending").length;
   const menuItems = [
     { icon: <LayoutDashboard className="w-5 h-5" />, label: "Dashboard", id: "dashboard" },
-    { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread },
+    { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread || undefined },
     { icon: <ClipboardList className="w-5 h-5" />, label: "Pedidos", id: "pedidos", badge: pendingOrdersCount || undefined },
     { icon: <Package className="w-5 h-5" />, label: "Produtos", id: "produtos" },
     { icon: <FileText className="w-5 h-5" />, label: "Relatorios", id: "relatorios" },
