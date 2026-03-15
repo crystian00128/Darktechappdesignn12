@@ -138,6 +138,17 @@ function playHangupSound() {
   } catch {}
 }
 
+// ─── WebRTC Configuration ───────────────────────────
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+  ],
+};
+
 // ─── Main Hook ──────────────────────────────────────
 export function useCallSystem(currentUsername: string) {
   const [callState, setCallState] = useState<CallState>({
@@ -158,6 +169,18 @@ export function useCallSystem(currentUsername: string) {
   const usernameRef = useRef(currentUsername);
   usernameRef.current = currentUsername;
 
+  // ─── WebRTC refs ───────────────────────────────────
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const webrtcRoleRef = useRef<"caller" | "callee" | null>(null);
+  const webrtcCallIdRef = useRef<string | null>(null);
+  const icePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const iceIndexRef = useRef<number>(0);
+  const webrtcSetupDoneRef = useRef(false);
+  const otherUserRef = useRef<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+
   // Lazy-init audio players (safe across HMR)
   const getRingtone = useCallback(() => {
     if (!ringtoneRef.current || typeof ringtoneRef.current.stop !== "function") {
@@ -172,6 +195,274 @@ export function useCallSystem(currentUsername: string) {
     }
     return dialToneRef.current;
   }, []);
+
+  // ─── WebRTC helpers ────────────────────────────────
+  const cleanupWebRTC = useCallback(() => {
+    console.log("[WebRTC] Cleaning up...");
+    // Stop ICE polling
+    if (icePollRef.current) {
+      clearInterval(icePollRef.current);
+      icePollRef.current = null;
+    }
+    // Close peer connection
+    if (pcRef.current) {
+      pcRef.current.onicecandidate = null;
+      pcRef.current.ontrack = null;
+      pcRef.current.oniceconnectionstatechange = null;
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    // Stop local media tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+    }
+    // Stop remote audio
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+      remoteAudioRef.current.remove();
+      remoteAudioRef.current = null;
+    }
+    // Cleanup server-side WebRTC data
+    const callId = webrtcCallIdRef.current;
+    if (callId) {
+      api.cleanupWebRTC(callId, usernameRef.current, otherUserRef.current || undefined).catch(() => {});
+    }
+    webrtcRoleRef.current = null;
+    webrtcCallIdRef.current = null;
+    webrtcSetupDoneRef.current = false;
+    otherUserRef.current = null;
+    iceIndexRef.current = 0;
+  }, []);
+
+  const getOrCreateRemoteAudio = useCallback(() => {
+    if (!remoteAudioRef.current) {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.setAttribute("style", "position:fixed;top:-9999px;left:-9999px;");
+      document.body.appendChild(audio);
+      remoteAudioRef.current = audio;
+    }
+    return remoteAudioRef.current;
+  }, []);
+
+  // Start polling for ICE candidates from the other party
+  const startICEPolling = useCallback((callId: string, otherUser: string) => {
+    if (icePollRef.current) clearInterval(icePollRef.current);
+    iceIndexRef.current = 0;
+
+    const pollICE = async () => {
+      try {
+        const pc = pcRef.current;
+        if (!pc || pc.connectionState === "closed") {
+          if (icePollRef.current) clearInterval(icePollRef.current);
+          return;
+        }
+        const res = await api.getICECandidates(callId, otherUser);
+        if (!res.success || !res.candidates) return;
+        const candidates = res.candidates;
+        // Only process new candidates
+        for (let i = iceIndexRef.current; i < candidates.length; i++) {
+          try {
+            const parsed = JSON.parse(candidates[i].candidate);
+            await pc.addIceCandidate(new RTCIceCandidate(parsed));
+            console.log(`[WebRTC] Added ICE candidate #${i} from ${otherUser}`);
+          } catch (e) {
+            console.warn("[WebRTC] Failed to add ICE candidate:", e);
+          }
+        }
+        iceIndexRef.current = candidates.length;
+      } catch (err: any) {
+        if (err?.name === "AbortError" || err?.message?.includes("Failed to fetch")) return;
+      }
+    };
+
+    // Poll immediately then every 1s
+    pollICE();
+    icePollRef.current = setInterval(pollICE, 1000);
+  }, []);
+
+  // Setup WebRTC as CALLER (creates offer)
+  const setupWebRTCCaller = useCallback(async (callId: string, otherUser: string) => {
+    if (webrtcSetupDoneRef.current) return;
+    webrtcSetupDoneRef.current = true;
+    console.log("[WebRTC] Setting up as CALLER for call:", callId);
+    otherUserRef.current = otherUser;
+
+    try {
+      // Get microphone
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+
+      // Create peer connection
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      pcRef.current = pc;
+      webrtcRoleRef.current = "caller";
+      webrtcCallIdRef.current = callId;
+
+      // Add local audio tracks to connection
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream);
+        console.log("[WebRTC] Added local track:", track.kind, track.enabled);
+      });
+
+      // Handle remote audio
+      pc.ontrack = (event) => {
+        console.log("[WebRTC] CALLER received remote track!", event.track.kind);
+        const audio = getOrCreateRemoteAudio();
+        audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+        audio.play().catch(e => console.warn("[WebRTC] Audio play failed:", e));
+      };
+
+      // Handle ICE candidates - send to server
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          api.sendICECandidate(callId, usernameRef.current, event.candidate.toJSON()).catch(() => {});
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("[WebRTC] ICE connection state:", pc.iceConnectionState);
+      };
+
+      // Create and set offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log("[WebRTC] Offer created, sending to server...");
+
+      // Store offer on server
+      await api.sendSDP(callId, usernameRef.current, pc.localDescription!.toJSON(), "offer");
+      console.log("[WebRTC] Offer stored on server");
+
+      // Poll for answer from callee
+      const answerPollInterval = setInterval(async () => {
+        try {
+          if (!pcRef.current || pcRef.current.signalingState === "closed") {
+            clearInterval(answerPollInterval);
+            return;
+          }
+          const res = await api.getSDP(callId, "answer");
+          if (res.success && res.data && res.data.sdp) {
+            clearInterval(answerPollInterval);
+            const answer = JSON.parse(res.data.sdp);
+            console.log("[WebRTC] Answer received from callee!");
+            if (pcRef.current && pcRef.current.signalingState === "have-local-offer") {
+              await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+              console.log("[WebRTC] Remote description set (answer)");
+            }
+          }
+        } catch (err: any) {
+          if (err?.name === "AbortError" || err?.message?.includes("Failed to fetch")) return;
+        }
+      }, 1000);
+
+      // Start polling for ICE candidates from the other party
+      startICEPolling(callId, otherUser);
+
+    } catch (err) {
+      console.error("[WebRTC] CALLER setup failed:", err);
+      webrtcSetupDoneRef.current = false;
+    }
+  }, [getOrCreateRemoteAudio, startICEPolling]);
+
+  // Setup WebRTC as CALLEE (receives offer, creates answer)
+  const setupWebRTCCallee = useCallback(async (callId: string, otherUser: string) => {
+    if (webrtcSetupDoneRef.current) return;
+    webrtcSetupDoneRef.current = true;
+    console.log("[WebRTC] Setting up as CALLEE for call:", callId);
+    otherUserRef.current = otherUser;
+
+    try {
+      // Get microphone
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+
+      // Create peer connection
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      pcRef.current = pc;
+      webrtcRoleRef.current = "callee";
+      webrtcCallIdRef.current = callId;
+
+      // Add local audio tracks
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream);
+        console.log("[WebRTC] Added local track:", track.kind, track.enabled);
+      });
+
+      // Handle remote audio
+      pc.ontrack = (event) => {
+        console.log("[WebRTC] CALLEE received remote track!", event.track.kind);
+        const audio = getOrCreateRemoteAudio();
+        audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+        audio.play().catch(e => console.warn("[WebRTC] Audio play failed:", e));
+      };
+
+      // Handle ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          api.sendICECandidate(callId, usernameRef.current, event.candidate.toJSON()).catch(() => {});
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("[WebRTC] ICE connection state:", pc.iceConnectionState);
+      };
+
+      // Poll for offer from caller
+      const pollForOffer = async (): Promise<RTCSessionDescriptionInit | null> => {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          try {
+            const res = await api.getSDP(callId, "offer");
+            if (res.success && res.data && res.data.sdp) {
+              return JSON.parse(res.data.sdp);
+            }
+          } catch {}
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        return null;
+      };
+
+      const offer = await pollForOffer();
+      if (!offer) {
+        console.error("[WebRTC] No offer received after 30s");
+        webrtcSetupDoneRef.current = false;
+        return;
+      }
+
+      console.log("[WebRTC] Offer received from caller!");
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+      // Create and set answer
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      console.log("[WebRTC] Answer created, sending to server...");
+
+      // Store answer on server
+      await api.sendSDP(callId, usernameRef.current, pc.localDescription!.toJSON(), "answer");
+      console.log("[WebRTC] Answer stored on server");
+
+      // Start polling for ICE candidates from the caller
+      startICEPolling(callId, otherUser);
+
+    } catch (err) {
+      console.error("[WebRTC] CALLEE setup failed:", err);
+      webrtcSetupDoneRef.current = false;
+    }
+  }, [getOrCreateRemoteAudio, startICEPolling]);
+
+  // ─── Mute/unmute ──────────────────────────────────
+  const toggleMute = useCallback(() => {
+    if (localStreamRef.current) {
+      const tracks = localStreamRef.current.getAudioTracks();
+      const newMuted = !isMuted;
+      tracks.forEach(t => { t.enabled = !newMuted; });
+      setIsMuted(newMuted);
+      console.log("[WebRTC] Mute toggled:", newMuted);
+    }
+  }, [isMuted]);
 
   // Poll for call status changes
   const pollCalls = useCallback(async () => {
@@ -193,7 +484,11 @@ export function useCallSystem(currentUsername: string) {
         setCallState(prev => ({ ...prev, incomingCall: incoming }));
       } else if (incoming && incoming.status === "connected") {
         getRingtone().stop();
-        if (!state.isInCall) playConnectedSound();
+        if (!state.isInCall) {
+          playConnectedSound();
+          // Callee: setup WebRTC when call connects
+          setupWebRTCCallee(incoming.callId, incoming.from);
+        }
         setCallState(prev => ({
           ...prev,
           incomingCall: null,
@@ -212,6 +507,8 @@ export function useCallSystem(currentUsername: string) {
       if (outgoing && outgoing.status === "connected" && state.outgoingCall) {
         getDialTone().stop();
         playConnectedSound();
+        // Caller: setup WebRTC when callee answers
+        setupWebRTCCaller(outgoing.callId, outgoing.to);
         setCallState(prev => ({
           ...prev,
           outgoingCall: null,
@@ -221,6 +518,7 @@ export function useCallSystem(currentUsername: string) {
       } else if (!outgoing && state.outgoingCall) {
         getDialTone().stop();
         playHangupSound();
+        cleanupWebRTC();
         setCallState(prev => ({ ...prev, outgoingCall: null }));
       }
 
@@ -228,6 +526,8 @@ export function useCallSystem(currentUsername: string) {
       if (!outgoing && !incoming && state.isInCall) {
         playHangupSound();
         lastCallIdRef.current = null;
+        cleanupWebRTC();
+        setIsMuted(false);
         setCallState({
           incomingCall: null,
           outgoingCall: null,
@@ -236,12 +536,12 @@ export function useCallSystem(currentUsername: string) {
         });
       }
     } catch (err: any) {
-      // Silence transient network errors (tab switch, connectivity, abort, timeout) — they resolve on next poll
+      // Silence transient network errors
       if (
         err?.name === 'AbortError' ||
         (err instanceof TypeError && err.message?.includes('Failed to fetch'))
       ) {
-        return; // silently skip
+        return;
       }
       console.error("Erro polling chamadas:", err);
     }
@@ -255,8 +555,9 @@ export function useCallSystem(currentUsername: string) {
       if (pollingRef.current) clearInterval(pollingRef.current);
       try { ringtoneRef.current?.stop(); } catch {}
       try { dialToneRef.current?.stop(); } catch {}
+      cleanupWebRTC();
     };
-  }, [currentUsername, pollCalls]);
+  }, [currentUsername, pollCalls, cleanupWebRTC]);
 
   // ── Actions ──────────────────────────────────
   const startCall = useCallback(async (to: string, type: "voice" | "video", fromName: string, fromPhoto?: string) => {
@@ -278,6 +579,8 @@ export function useCallSystem(currentUsername: string) {
       getRingtone().stop();
       await api.answerCall(currentUsername, state.incomingCall.callId);
       playConnectedSound();
+      // Start WebRTC as callee
+      setupWebRTCCallee(state.incomingCall.callId, state.incomingCall.from);
       setCallState(prev => ({
         ...prev,
         incomingCall: null,
@@ -287,15 +590,16 @@ export function useCallSystem(currentUsername: string) {
     } catch (err) {
       console.error("Erro ao atender chamada:", err);
     }
-  }, [currentUsername]);
+  }, [currentUsername, setupWebRTCCallee]);
 
   const declineCall = useCallback(async () => {
     getRingtone().stop();
     lastCallIdRef.current = null;
     try { await api.endCall(currentUsername); } catch {}
     playHangupSound();
+    cleanupWebRTC();
     setCallState(prev => ({ ...prev, incomingCall: null }));
-  }, [currentUsername]);
+  }, [currentUsername, cleanupWebRTC]);
 
   const endCall = useCallback(async () => {
     getRingtone().stop();
@@ -303,13 +607,15 @@ export function useCallSystem(currentUsername: string) {
     lastCallIdRef.current = null;
     try { await api.endCall(currentUsername); } catch {}
     playHangupSound();
+    cleanupWebRTC();
+    setIsMuted(false);
     setCallState({
       incomingCall: null,
       outgoingCall: null,
       isInCall: false,
       activeCall: null,
     });
-  }, [currentUsername]);
+  }, [currentUsername, cleanupWebRTC]);
 
   return {
     ...callState,
@@ -317,5 +623,8 @@ export function useCallSystem(currentUsername: string) {
     answerCall,
     declineCall,
     endCall,
+    toggleMute,
+    isMuted,
+    localStream: localStreamRef.current,
   };
 }

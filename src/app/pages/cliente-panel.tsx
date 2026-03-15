@@ -739,6 +739,8 @@ export function ClientePanel() {
             currentUserPhoto={currentUser.photo}
             currentUserName={currentUser.name}
             onEnd={callSystem.endCall}
+            isMuted={callSystem.isMuted}
+            onToggleMute={callSystem.toggleMute}
           />
         )}
       </AnimatePresence>

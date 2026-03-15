@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { Phone, PhoneOff, Video, VideoOff, MicOff, Maximize2 } from "lucide-react";
+import { Phone, PhoneOff, Video, VideoOff, MicOff, Mic, Maximize2 } from "lucide-react";
 import type { CallData } from "../hooks/useCallSystem";
 
 /* ── Neon Avatar (standalone for call overlays) ── */
@@ -27,6 +27,30 @@ function CallAvatar({ photo, name, size = 80 }: { photo?: string; name?: string;
   );
 }
 
+/* ── Audio Visualizer ── */
+function AudioVisualizer({ isActive, accent }: { isActive: boolean; accent: string }) {
+  return (
+    <div className="flex items-center justify-center gap-1 h-8">
+      {[...Array(5)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="w-1 rounded-full"
+          style={{ backgroundColor: accent }}
+          animate={isActive ? {
+            height: [4, 12 + Math.random() * 16, 4],
+            opacity: [0.4, 1, 0.4],
+          } : { height: 4, opacity: 0.3 }}
+          transition={{
+            duration: 0.4 + Math.random() * 0.3,
+            repeat: Infinity,
+            delay: i * 0.1,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /* ── Incoming Call Overlay (fullscreen, with Accept/Decline) ── */
 export function IncomingCallOverlay({
   call,
@@ -37,6 +61,9 @@ export function IncomingCallOverlay({
   onAnswer: () => void;
   onDecline: () => void;
 }) {
+  // Guard against null call
+  if (!call) return null;
+
   const isVideo = call.type === "video";
   const accent = isVideo ? "#8b5cf6" : "#00f0ff";
 
@@ -130,6 +157,8 @@ export function ActiveCallOverlay({
   currentUserPhoto,
   currentUserName,
   onEnd,
+  isMuted = false,
+  onToggleMute,
 }: {
   call: CallData;
   isConnected: boolean;
@@ -137,9 +166,10 @@ export function ActiveCallOverlay({
   currentUserPhoto?: string;
   currentUserName?: string;
   onEnd: () => void;
+  isMuted?: boolean;
+  onToggleMute?: () => void;
 }) {
   const [elapsed, setElapsed] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
 
   useEffect(() => {
@@ -147,6 +177,9 @@ export function ActiveCallOverlay({
     const i = setInterval(() => setElapsed(p => p + 1), 1000);
     return () => clearInterval(i);
   }, [isConnected]);
+
+  // Guard against null call (race condition during state transitions)
+  if (!call) return null;
 
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   const isVideo = call.type === "video";
@@ -204,6 +237,11 @@ export function ActiveCallOverlay({
           </motion.p>
         </div>
 
+        {/* Audio visualizer when connected */}
+        {isConnected && !isVideo && (
+          <AudioVisualizer isActive={!isMuted} accent={accent} />
+        )}
+
         {/* Video preview (when connected + video call) */}
         {isVideo && isConnected && (
           <div className="w-60 h-40 rounded-2xl bg-[#12121a] border border-[#1f1f2e] flex items-center justify-center overflow-hidden mt-2">
@@ -218,6 +256,18 @@ export function ActiveCallOverlay({
           </div>
         )}
 
+        {/* Mute indicator */}
+        {isMuted && isConnected && (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#ff006e]/20 border border-[#ff006e]/30"
+          >
+            <MicOff className="w-3 h-3 text-[#ff006e]" />
+            <span className="text-xs text-[#ff006e] font-medium">Microfone Mudo</span>
+          </motion.div>
+        )}
+
         {/* Control buttons */}
         <div className="flex items-center gap-5 mt-4">
           {isVideo && (
@@ -226,9 +276,9 @@ export function ActiveCallOverlay({
               {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
             </button>
           )}
-          <button onClick={() => setIsMuted(!isMuted)}
+          <button onClick={onToggleMute}
             className={`p-3.5 rounded-full transition-colors ${isMuted ? "bg-[#ff006e]/20 text-[#ff006e]" : "bg-[#1f1f2e] text-gray-400"}`}>
-            <MicOff className="w-5 h-5" />
+            {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
           <motion.button
             whileTap={{ scale: 0.9 }}

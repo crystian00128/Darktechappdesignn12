@@ -2543,6 +2543,80 @@ app.get("/make-server-42377006/calls/status/:username", async (c) => {
   }
 });
 
+// ==================== WEBRTC SIGNALING ====================
+// Store SDP offer/answer for a call
+app.post("/make-server-42377006/calls/webrtc/sdp", async (c) => {
+  try {
+    const { callId, from, sdp, type } = await c.req.json();
+    if (!callId || !from || !sdp || !type) {
+      return c.json({ success: false, error: "callId, from, sdp e type obrigatórios" }, 400);
+    }
+    await kv.set(`webrtc:sdp:${callId}:${type}`, { from, sdp, type, ts: Date.now() });
+    console.log(`[WebRTC] SDP ${type} stored for call ${callId} from ${from}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("❌ Erro ao salvar SDP:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get SDP offer/answer for a call
+app.get("/make-server-42377006/calls/webrtc/sdp/:callId/:type", async (c) => {
+  try {
+    const callId = c.req.param("callId");
+    const type = c.req.param("type");
+    const data = await kv.get(`webrtc:sdp:${callId}:${type}`);
+    return c.json({ success: true, data: data || null });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Store ICE candidates (append to array)
+app.post("/make-server-42377006/calls/webrtc/ice", async (c) => {
+  try {
+    const { callId, from, candidate } = await c.req.json();
+    if (!callId || !from || !candidate) {
+      return c.json({ success: false, error: "callId, from e candidate obrigatórios" }, 400);
+    }
+    const key = `webrtc:ice:${callId}:${from}`;
+    const existing = await kv.get(key) || [];
+    existing.push({ candidate, ts: Date.now() });
+    await kv.set(key, existing);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get ICE candidates from the other party
+app.get("/make-server-42377006/calls/webrtc/ice/:callId/:from", async (c) => {
+  try {
+    const callId = c.req.param("callId");
+    const from = c.req.param("from");
+    const data = await kv.get(`webrtc:ice:${callId}:${from}`) || [];
+    return c.json({ success: true, candidates: data });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Cleanup WebRTC data for a call
+app.post("/make-server-42377006/calls/webrtc/cleanup", async (c) => {
+  try {
+    const { callId, from, to } = await c.req.json();
+    if (!callId) return c.json({ success: true });
+    try { await kv.del(`webrtc:sdp:${callId}:offer`); } catch {}
+    try { await kv.del(`webrtc:sdp:${callId}:answer`); } catch {}
+    if (from) { try { await kv.del(`webrtc:ice:${callId}:${from}`); } catch {} }
+    if (to) { try { await kv.del(`webrtc:ice:${callId}:${to}`); } catch {} }
+    console.log(`[WebRTC] Cleanup done for call ${callId}`);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // WEB PUSH NOTIFICATION ENDPOINTS
 // These enable real push notifications that work even when

@@ -1498,6 +1498,8 @@ export function MotoristaPanel() {
             currentUserPhoto={currentUser.photo}
             currentUserName={currentUser.name}
             onEnd={callSystem.endCall}
+            isMuted={callSystem.isMuted}
+            onToggleMute={callSystem.toggleMute}
           />
         )}
       </AnimatePresence>

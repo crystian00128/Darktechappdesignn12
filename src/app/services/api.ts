@@ -401,6 +401,36 @@ export async function getCallStatus(username: string) {
   return fetchAPI(`/calls/status/${username}`);
 }
 
+// ==================== WEBRTC SIGNALING ====================
+export async function sendSDP(callId: string, from: string, sdp: RTCSessionDescriptionInit, type: 'offer' | 'answer') {
+  return fetchAPI('/calls/webrtc/sdp', {
+    method: 'POST',
+    body: JSON.stringify({ callId, from, sdp: JSON.stringify(sdp), type }),
+  });
+}
+
+export async function getSDP(callId: string, type: 'offer' | 'answer') {
+  return fetchAPI(`/calls/webrtc/sdp/${callId}/${type}`);
+}
+
+export async function sendICECandidate(callId: string, from: string, candidate: RTCIceCandidateInit) {
+  return fetchAPI('/calls/webrtc/ice', {
+    method: 'POST',
+    body: JSON.stringify({ callId, from, candidate: JSON.stringify(candidate) }),
+  });
+}
+
+export async function getICECandidates(callId: string, from: string) {
+  return fetchAPI(`/calls/webrtc/ice/${callId}/${from}`);
+}
+
+export async function cleanupWebRTC(callId: string, from?: string, to?: string) {
+  return fetchAPI('/calls/webrtc/cleanup', {
+    method: 'POST',
+    body: JSON.stringify({ callId, from, to }),
+  });
+}
+
 // ==================== PUSH NOTIFICATIONS ====================
 export async function getVapidPublicKey() {
   return fetchAPI('/push/vapid-key');
