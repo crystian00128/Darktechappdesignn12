@@ -236,6 +236,10 @@ export function useCallSystem(currentUsername: string) {
         });
       }
     } catch (err) {
+      // Silence transient network errors (tab switch, connectivity, abort) — they resolve on next poll
+      if (err instanceof TypeError && (err as TypeError).message?.includes('Failed to fetch')) {
+        return; // silently skip
+      }
       console.error("Erro polling chamadas:", err);
     }
   }, []); // No deps — reads everything from refs

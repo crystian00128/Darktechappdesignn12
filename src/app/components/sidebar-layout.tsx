@@ -19,6 +19,7 @@ interface SidebarLayoutProps {
   title: string;
   headerAction?: ReactNode;
   centerAction?: ReactNode;
+  onLogout?: () => void;
 }
 
 export function SidebarLayout({
@@ -29,6 +30,7 @@ export function SidebarLayout({
   title,
   headerAction,
   centerAction,
+  onLogout,
 }: SidebarLayoutProps) {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -83,6 +85,7 @@ export function SidebarLayout({
   };
 
   const confirmLogout = () => {
+    onLogout?.();
     localStorage.removeItem("currentUser");
     localStorage.removeItem("adminOriginalSession");
     navigate("/");

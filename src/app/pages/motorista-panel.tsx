@@ -42,6 +42,9 @@ import {
   BarChart3,
   Wallet,
   Calendar,
+  LocateFixed,
+  MessageCircle,
+  ArrowRight,
 } from "lucide-react";
 import { useUserCreator } from "../hooks/useUserCreator";
 import { useCallSystem } from "../hooks/useCallSystem";
@@ -49,7 +52,7 @@ import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overl
 import { MotoristaDashboardCharts } from "../components/motorista-charts";
 import { NotificationBell } from "../components/notification-bell";
 import * as notif from "../services/notifications";
-import { PushToggle } from "../components/push-toggle";
+import * as pwa from "../services/pwa";
 import * as api from "../services/api";
 import * as sfx from "../services/sounds";
 
@@ -616,7 +619,10 @@ type TabId = "entregas" | "chat" | "relatorios";
 
 export function MotoristaPanel() {
   const navigate = useNavigate();
-  const [isOnline, setIsOnline] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => {
+    try { return localStorage.getItem("motorista_online_" + JSON.parse(localStorage.getItem("currentUser") || "{}").username) === "true"; } catch { return false; }
+  });
+  const [statusToast, setStatusToast] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("entregas");
   const [orders, setOrders] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any>({});
@@ -624,6 +630,12 @@ export function MotoristaPanel() {
   const [vendedorClients, setVendedorClients] = useState<any[]>([]);
   const [isChatConversationOpen, setIsChatConversationOpen] = useState(false);
   const [driverConfig, setDriverConfig] = useState<{ taxaFixa: number; taxaPercent: number }>({ taxaFixa: 5, taxaPercent: 8 });
+  const [deliveryChatOrder, setDeliveryChatOrder] = useState<any>(null);
+  const [deliveryChatMsgs, setDeliveryChatMsgs] = useState<any[]>([]);
+  const [deliveryChatInput, setDeliveryChatInput] = useState("");
+  const [sendingLocation, setSendingLocation] = useState(false);
+  const deliveryChatRef = useRef<HTMLDivElement>(null);
+  const deliveryChatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
   const { creator: vendedor, loading } = useUserCreator(currentUser.username);
@@ -643,15 +655,16 @@ export function MotoristaPanel() {
     await callSystem.startCall(to, type, currentUser.name || currentUser.username, currentUser.photo);
   }, [callSystem.startCall, currentUser.name, currentUser.username, currentUser.photo]);
 
-  // Commission config - defaults from vendedor settings (R$5 fixed + 8%)
-  // When vendedor saves custom rates, they'll be loaded here
+  // Commission config - loads vendedor-specific rates for this driver
   const loadDriverConfig = useCallback(async () => {
     if (!vendedor?.username) return;
     try {
-      // Try to load vendedor-specific config for this driver
-      const r = await api.getMetrics(currentUser.username);
-      if (r.success && r.metrics?.driverConfig) {
-        setDriverConfig(r.metrics.driverConfig);
+      const r = await api.getDriverCommission(vendedor.username, currentUser.username);
+      if (r.success && r.config) {
+        setDriverConfig({
+          taxaFixa: r.config.taxaFixa ?? 5,
+          taxaPercent: r.config.taxaPercent ?? 8,
+        });
       }
     } catch { /* use defaults */ }
   }, [vendedor?.username, currentUser.username]);
@@ -684,9 +697,29 @@ export function MotoristaPanel() {
   const handleToggleOnline = async () => {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
+    localStorage.setItem("motorista_online_" + currentUser.username, String(newStatus));
     sfx.playToggle(newStatus);
     try { await api.setUserStatus(currentUser.username, newStatus); } catch (err) { console.error(err); }
+    if (newStatus) {
+      pwa.setPushEnabledForUser(currentUser.username, true);
+      pwa.registerPushSubscription(currentUser.username).catch(() => {});
+      setStatusToast("🟢 Você Está Online, Receberá pedidos e Notificações");
+    } else {
+      pwa.setPushEnabledForUser(currentUser.username, false);
+      pwa.unregisterPushSubscription(currentUser.username).catch(() => {});
+      setStatusToast("🔴 Você Está Off, Não receberá Pedidos e nem Notificações");
+    }
+    setTimeout(() => setStatusToast(null), 4000);
   };
+
+  // Re-register push on mount if online
+  useEffect(() => {
+    if (isOnline && currentUser.username) {
+      api.setUserStatus(currentUser.username, true).catch(() => {});
+      pwa.setPushEnabledForUser(currentUser.username, true);
+      pwa.registerPushSubscription(currentUser.username).catch(() => {});
+    }
+  }, []);
 
   const calcCommission = (total: number) => {
     const fixa = driverConfig.taxaFixa || 0;
@@ -696,26 +729,99 @@ export function MotoristaPanel() {
 
   const handleAcceptOrder = async (order: any) => {
     try {
-      await api.updateOrderStatus(order.id, { status: "delivering", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
+      await api.updateOrderStatus(order.id, { status: "driver_accepted", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
       sfx.playSuccess();
-      notif.notifyOrderStatus("delivering", order.id);
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "delivering", updatedAt: new Date().toISOString() } : o)));
+      notif.notifyOrderStatus("driver_accepted", order.id);
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "driver_accepted", driverAcceptedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
+      // Open delivery chat automatically
+      setDeliveryChatOrder({ ...order, status: "driver_accepted" });
+    } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
+  };
+
+  const handleOnTheWay = async (order: any) => {
+    try {
+      await api.updateOrderStatus(order.id, { status: "on_the_way", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
+      sfx.playSuccess();
+      notif.notifyOrderStatus("on_the_way", order.id);
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "on_the_way", onTheWayAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
+      if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder({ ...order, status: "on_the_way" });
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
   };
 
   const handleConfirmDelivery = async (order: any) => {
+    const comm = calcCommission(order.total || 0);
     try {
-      await api.updateOrderStatus(order.id, { status: "delivered", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
+      await api.updateOrderStatus(order.id, {
+        status: "delivered",
+        vendorUsername: order.vendorUsername,
+        clientUsername: order.clientUsername,
+        driverUsername: currentUser.username,
+        driverCommission: { fixa: comm.fixa, perc: comm.perc, total: comm.total, orderTotal: order.total || 0 },
+      });
       sfx.playSuccess();
       notif.notifyOrderStatus("delivered", order.id);
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "delivered", updatedAt: new Date().toISOString() } : o)));
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "delivered", deliveredAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
       loadMetrics();
+      if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder(null);
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
   };
 
+  // ─── Delivery Chat with Client ────────────────
+  const loadDeliveryChatMsgs = useCallback(async () => {
+    if (!deliveryChatOrder?.clientUsername) return;
+    try {
+      const res = await api.getMessages(currentUser.username, deliveryChatOrder.clientUsername);
+      if (res.success) setDeliveryChatMsgs(res.messages || []);
+    } catch {}
+  }, [currentUser.username, deliveryChatOrder?.clientUsername]);
+
+  useEffect(() => {
+    if (deliveryChatOrder) {
+      loadDeliveryChatMsgs();
+      deliveryChatPollRef.current = setInterval(loadDeliveryChatMsgs, 3000);
+      return () => { if (deliveryChatPollRef.current) clearInterval(deliveryChatPollRef.current); };
+    } else {
+      setDeliveryChatMsgs([]);
+    }
+  }, [deliveryChatOrder?.id, loadDeliveryChatMsgs]);
+
+  useEffect(() => {
+    if (deliveryChatRef.current) deliveryChatRef.current.scrollTop = deliveryChatRef.current.scrollHeight;
+  }, [deliveryChatMsgs]);
+
+  const handleSendDeliveryChat = async () => {
+    if (!deliveryChatInput.trim() || !deliveryChatOrder) return;
+    const text = deliveryChatInput.trim();
+    setDeliveryChatInput("");
+    try {
+      await api.sendMessage(currentUser.username, deliveryChatOrder.clientUsername, text);
+      api.notifyNewMessage(deliveryChatOrder.clientUsername, currentUser.name || currentUser.username, text, "text").catch(() => {});
+      loadDeliveryChatMsgs();
+    } catch {}
+  };
+
+  const handleSendMyLocation = async () => {
+    if (!deliveryChatOrder || sendingLocation) return;
+    setSendingLocation(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+      });
+      const { latitude, longitude } = pos.coords;
+      const locText = `📍 Minha localização: https://maps.google.com/?q=${latitude},${longitude}`;
+      await api.sendMessage(currentUser.username, deliveryChatOrder.clientUsername, locText, "location");
+      api.notifyNewMessage(deliveryChatOrder.clientUsername, currentUser.name || currentUser.username, "📍 Localização compartilhada", "location").catch(() => {});
+      loadDeliveryChatMsgs();
+    } catch (err) {
+      alert("Não foi possível obter localização. Verifique as permissões do GPS.");
+    } finally {
+      setSendingLocation(false);
+    }
+  };
+
   // Order categories
-  const newOrders = orders.filter((o) => ["accepted", "preparing"].includes(o.status));
-  const activeDeliveries = orders.filter((o) => o.status === "delivering");
+  const newOrders = orders.filter((o) => ["accepted", "preparing", "delivering"].includes(o.status));
+  const activeDeliveries = orders.filter((o) => ["driver_accepted", "on_the_way"].includes(o.status));
   const completedDeliveries = orders.filter((o) => o.status === "delivered");
   const totalEarned = completedDeliveries.reduce((sum, o) => sum + calcCommission(o.total || 0).total, 0);
 
@@ -786,6 +892,18 @@ export function MotoristaPanel() {
 
   return (
     <div className="h-dvh bg-[#0a0a0f] flex flex-col overflow-hidden relative">
+      {/* Status Toast */}
+      <AnimatePresence>
+        {statusToast && (
+          <motion.div initial={{ opacity: 0, y: -40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -40 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] px-5 py-3 rounded-2xl text-white text-sm font-semibold border backdrop-blur-2xl shadow-[0_0_40px_rgba(0,0,0,0.6)] max-w-[90vw] text-center"
+            style={{ background: statusToast.includes("Online") ? "linear-gradient(135deg, rgba(0,255,65,0.2), rgba(0,240,255,0.15))" : "linear-gradient(135deg, rgba(255,0,60,0.2), rgba(255,0,110,0.15))", borderColor: statusToast.includes("Online") ? "rgba(0,255,65,0.4)" : "rgba(255,0,60,0.4)" }}
+          >
+            {statusToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Particle Background ── */}
       <div className="absolute inset-0 pointer-events-none z-0">
         <ParticleBackground />
@@ -809,7 +927,6 @@ export function MotoristaPanel() {
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <PushToggle username={currentUser.username} accentColor="#ff00ff" compact />
               <NotificationBell />
               <motion.button onClick={() => setShowLogoutConfirm(true)} whileTap={{ scale: 0.9 }} className="p-2 rounded-xl bg-[#ff006e]/10 text-[#ff006e]">
                 <LogOut className="w-4 h-4" />
@@ -843,11 +960,11 @@ export function MotoristaPanel() {
                           <div className="w-3 h-3 rounded-full bg-gray-600" />
                         )}
                         <span className={`font-bold text-sm ${isOnline ? "text-[#00ff41]" : "text-gray-400"}`}>
-                          {isOnline ? "Disponivel para entregas" : "Voce esta offline"}
+                          {isOnline ? "Você Está Online" : "Você Está Offline"}
                         </span>
                       </div>
                       <p className="text-gray-500 text-[11px]">
-                        {isOnline ? "Recebendo novos pedidos em tempo real" : "Fique online para receber solicitacoes"}
+                        {isOnline ? "Recebendo pedidos e notificações" : "Ative para receber pedidos e notificações"}
                       </p>
                     </div>
                     <motion.button
@@ -1006,30 +1123,35 @@ export function MotoristaPanel() {
                 </motion.div>
               )}
 
-              {/* ── EM ROTA (Active Deliveries) ── */}
+              {/* ── ENTREGAS ATIVAS (driver_accepted / on_the_way) ── */}
               {activeDeliveries.length > 0 && (
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
                   <div className="flex items-center gap-2 mb-2">
                     <motion.div animate={{ rotate: [0, 10, -10, 0] }} transition={{ duration: 2, repeat: Infinity }}>
                       <Navigation className="w-4 h-4 text-[#ff00ff]" />
                     </motion.div>
-                    <h3 className="text-white font-bold text-sm">Em Rota</h3>
+                    <h3 className="text-white font-bold text-sm">Em Andamento</h3>
                     <span className="ml-auto px-2 py-0.5 bg-[#ff00ff]/20 text-[#ff00ff] rounded-full text-[10px] font-bold">{activeDeliveries.length}</span>
                   </div>
                   <div className="space-y-2.5">
                     {activeDeliveries.map((order) => {
                       const comm = calcCommission(order.total || 0);
+                      const isAccepted = order.status === "driver_accepted";
+                      const isOnWay = order.status === "on_the_way";
+                      const statusColor = isAccepted ? "#00f0ff" : "#ff00ff";
+                      const statusLabel = isAccepted ? "ACEITO" : "A CAMINHO";
                       return (
                         <motion.div key={order.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                          className="relative overflow-hidden bg-[#12121a]/90 border border-[#ff00ff]/30 rounded-2xl shadow-[0_0_15px_rgba(255,0,255,0.08)]">
+                          className="relative overflow-hidden bg-[#12121a]/90 border rounded-2xl shadow-[0_0_15px_rgba(255,0,255,0.08)]"
+                          style={{ borderColor: `${statusColor}40` }}>
                           <motion.div className="absolute top-0 left-0 right-0 h-[2px]"
-                            style={{ background: "linear-gradient(90deg, transparent, #ff00ff, transparent)" }}
+                            style={{ background: `linear-gradient(90deg, transparent, ${statusColor}, transparent)` }}
                             animate={{ opacity: [0.3, 0.8, 0.3] }} transition={{ duration: 2, repeat: Infinity }} />
                           <div className="p-3.5">
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded-lg bg-[#ff00ff]/15 flex items-center justify-center">
-                                  <Truck className="w-4 h-4 text-[#ff00ff]" />
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${statusColor}15` }}>
+                                  {isOnWay ? <Navigation className="w-4 h-4" style={{ color: statusColor }} /> : <Truck className="w-4 h-4" style={{ color: statusColor }} />}
                                 </div>
                                 <div>
                                   <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
@@ -1037,13 +1159,14 @@ export function MotoristaPanel() {
                                 </div>
                               </div>
                               <motion.span animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
-                                className="px-2.5 py-1 bg-[#ff00ff]/20 text-[#ff00ff] rounded-full font-bold text-[10px] flex items-center gap-1">
-                                <Navigation className="w-3 h-3" /> EM ROTA
+                                className="px-2.5 py-1 rounded-full font-bold text-[10px] flex items-center gap-1"
+                                style={{ background: `${statusColor}20`, color: statusColor }}>
+                                {isOnWay ? <Navigation className="w-3 h-3" /> : <Check className="w-3 h-3" />} {statusLabel}
                               </motion.span>
                             </div>
                             {order.deliveryAddress && (
                               <div className="flex items-start gap-1.5 mb-2.5 px-1">
-                                <MapPin className="w-3.5 h-3.5 text-[#ff00ff] shrink-0 mt-0.5" />
+                                <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: statusColor }} />
                                 <span className="text-gray-300 text-[11px] leading-tight">{order.deliveryAddress}</span>
                               </div>
                             )}
@@ -1056,17 +1179,36 @@ export function MotoristaPanel() {
                               ))}
                               {(order.items?.length || 0) > 3 && <p className="text-gray-500 text-[10px]">+{order.items.length - 3} itens</p>}
                             </div>
-                            <div className="flex items-center justify-between">
-                              <div className="bg-[#00ff41]/5 border border-[#00ff41]/15 rounded-lg px-3 py-1.5">
-                                <p className="text-[9px] text-gray-500 uppercase">Comissao</p>
+                            {/* Commission */}
+                            <div className="bg-[#00ff41]/5 border border-[#00ff41]/15 rounded-xl p-2.5 mb-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-[9px] text-gray-500 uppercase">Sua Comissao</p>
                                 <p className="text-[#00ff41] font-bold text-sm">R$ {comm.total.toFixed(2)}</p>
                               </div>
-                              <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleConfirmDelivery(order)}
-                                className="px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 text-black"
-                                style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 20px rgba(0,255,65,0.3)" }}>
-                                <CheckCircle2 className="w-4 h-4" />
-                                Entregue
+                            </div>
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              {/* Chat with Client Button */}
+                              <motion.button whileTap={{ scale: 0.95 }} onClick={() => setDeliveryChatOrder(order)}
+                                className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 bg-[#8b5cf6]/15 text-[#8b5cf6] border border-[#8b5cf6]/25 hover:bg-[#8b5cf6]/25 transition-colors">
+                                <MessageCircle className="w-3.5 h-3.5" /> Chat Cliente
                               </motion.button>
+
+                              {/* Estou a Caminho / Pedido Entregue */}
+                              {isAccepted && (
+                                <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleOnTheWay(order)}
+                                  className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
+                                  style={{ background: "linear-gradient(135deg, #ff00ff, #8b5cf6)", boxShadow: "0 0 20px rgba(255,0,255,0.3)" }}>
+                                  <Navigation className="w-3.5 h-3.5" /> Estou a Caminho
+                                </motion.button>
+                              )}
+                              {isOnWay && (
+                                <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleConfirmDelivery(order)}
+                                  className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-black"
+                                  style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 20px rgba(0,255,65,0.3)" }}>
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> Pedido Entregue
+                                </motion.button>
+                              )}
                             </div>
                           </div>
                         </motion.div>
@@ -1319,7 +1461,14 @@ export function MotoristaPanel() {
                   <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowLogoutConfirm(false)} className="flex-1 py-3 bg-[#1f1f2e] text-gray-300 font-semibold rounded-xl text-sm hover:bg-[#2a2a3e] transition-colors">
                     Cancelar
                   </motion.button>
-                  <motion.button whileHover={{ boxShadow: "0 0 25px rgba(255,0,110,0.4)" }} whileTap={{ scale: 0.95 }} onClick={() => { localStorage.removeItem("currentUser"); navigate("/"); }}
+                  <motion.button whileHover={{ boxShadow: "0 0 25px rgba(255,0,110,0.4)" }} whileTap={{ scale: 0.95 }} onClick={() => {
+                      // Clear online state and push on manual logout
+                      localStorage.setItem("motorista_online_" + currentUser.username, "false");
+                      pwa.setPushEnabledForUser(currentUser.username, false);
+                      pwa.unregisterPushSubscription(currentUser.username).catch(() => {});
+                      api.setUserStatus(currentUser.username, false).catch(() => {});
+                      localStorage.removeItem("currentUser"); navigate("/");
+                    }}
                     className="flex-1 py-3 bg-gradient-to-r from-[#ff006e] to-[#ff0040] text-white font-bold rounded-xl text-sm shadow-[0_0_20px_rgba(255,0,110,0.3)]">
                     Sair
                   </motion.button>
@@ -1350,6 +1499,141 @@ export function MotoristaPanel() {
             currentUserName={currentUser.name}
             onEnd={callSystem.endCall}
           />
+        )}
+      </AnimatePresence>
+
+      {/* ═══ Delivery Chat Fullscreen Overlay ═══ */}
+      <AnimatePresence>
+        {deliveryChatOrder && (
+          <motion.div
+            initial={{ opacity: 0, y: "100%" }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            className="fixed inset-0 z-[75] bg-[#050508] flex flex-col"
+          >
+            {/* Chat Header */}
+            <div className="shrink-0 bg-[#0a0a12]/95 backdrop-blur-xl border-b border-[#1f1f2e]/60 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDeliveryChatOrder(null)}
+                  className="p-1.5 rounded-xl hover:bg-[#1f1f2e] text-gray-400 transition-colors shrink-0">
+                  <ChevronLeft className="w-5 h-5" />
+                </motion.button>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/15 flex items-center justify-center">
+                  <span className="text-white font-bold text-xs">{(deliveryChatOrder.clientUsername || "?").charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-bold text-sm truncate">@{deliveryChatOrder.clientUsername}</p>
+                  <p className="text-gray-500 text-[10px]">Pedido #{deliveryChatOrder.id?.slice(-6).toUpperCase()} - Chat de Entrega</p>
+                </div>
+                {/* Action Badge */}
+                <motion.span
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="px-2 py-1 rounded-full text-[9px] font-bold"
+                  style={{
+                    background: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff20" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff20" : "#00ff4120",
+                    color: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff" : "#00ff41",
+                  }}
+                >
+                  {deliveryChatOrder.status === "driver_accepted" ? "ACEITO" : deliveryChatOrder.status === "on_the_way" ? "A CAMINHO" : "ENTREGUE"}
+                </motion.span>
+              </div>
+
+              {/* Action Bar */}
+              <div className="flex gap-2 mt-2.5">
+                {deliveryChatOrder.status === "driver_accepted" && (
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleOnTheWay(deliveryChatOrder)}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
+                    style={{ background: "linear-gradient(135deg, #ff00ff, #8b5cf6)", boxShadow: "0 0 15px rgba(255,0,255,0.25)" }}>
+                    <Navigation className="w-3.5 h-3.5" /> Estou a Caminho
+                  </motion.button>
+                )}
+                {deliveryChatOrder.status === "on_the_way" && (
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleConfirmDelivery(deliveryChatOrder)}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-black"
+                    style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 15px rgba(0,255,65,0.25)" }}>
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Pedido Entregue
+                  </motion.button>
+                )}
+                <motion.button whileTap={{ scale: 0.95 }} onClick={handleSendMyLocation}
+                  disabled={sendingLocation}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 bg-[#00f0ff]/15 text-[#00f0ff] border border-[#00f0ff]/25 disabled:opacity-50">
+                  {sendingLocation ? (
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-3.5 h-3.5 border-2 border-[#00f0ff]/30 border-t-[#00f0ff] rounded-full" />
+                  ) : (
+                    <LocateFixed className="w-3.5 h-3.5" />
+                  )}
+                  GPS
+                </motion.button>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div ref={deliveryChatRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+              {deliveryChatMsgs.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <motion.div animate={{ opacity: [0.2, 0.5, 0.2], scale: [0.95, 1, 0.95] }} transition={{ duration: 3, repeat: Infinity }}
+                    className="w-16 h-16 rounded-2xl bg-[#1f1f2e]/50 flex items-center justify-center mb-3">
+                    <MessageCircle className="w-7 h-7 text-gray-600" />
+                  </motion.div>
+                  <p className="text-gray-500 text-sm font-medium">Chat de Entrega</p>
+                  <p className="text-gray-600 text-[10px] mt-1">Converse com o cliente sobre a entrega</p>
+                  <p className="text-[#00f0ff] text-[10px] mt-2 font-medium">Peca a localizacao ou envie a sua!</p>
+                </div>
+              )}
+              {deliveryChatMsgs.map((msg: any) => {
+                const isMine = msg.from === currentUser.username;
+                const isLocation = msg.type === "location" || msg.text?.includes("maps.google.com");
+                return (
+                  <motion.div key={msg.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                    className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 ${
+                      isMine
+                        ? "bg-gradient-to-br from-[#ff00ff]/15 to-[#8b5cf6]/15 border border-[#ff00ff]/10"
+                        : "bg-[#12121a] border border-[#1f1f2e]/60"
+                    }`}>
+                      {isLocation ? (
+                        <a href={msg.text?.match(/https:\/\/maps\.google\.com[^\s]*/)?.[0] || "#"}
+                          target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-[#00f0ff] text-xs font-medium hover:underline">
+                          <MapPin className="w-4 h-4 text-[#ff00ff]" />
+                          <span>Ver Localizacao no Mapa</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <p className="text-white text-[13px] leading-relaxed break-words">{msg.text}</p>
+                      )}
+                      <p className={`text-[9px] mt-1 ${isMine ? "text-right text-gray-500" : "text-gray-600"}`}>
+                        {(() => { try { return new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })()}
+                      </p>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            {/* Input */}
+            <div className="shrink-0 bg-[#0a0a12]/95 backdrop-blur-xl border-t border-[#1f1f2e]/60 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={deliveryChatInput}
+                  onChange={(e) => setDeliveryChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendDeliveryChat(); } }}
+                  placeholder="Digite uma mensagem..."
+                  className="flex-1 px-4 py-2.5 bg-[#12121a] border border-[#1f1f2e] rounded-2xl text-white text-sm focus:outline-none focus:border-[#ff00ff]/40 placeholder-gray-600 transition-all"
+                />
+                <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendDeliveryChat}
+                  disabled={!deliveryChatInput.trim()}
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 disabled:opacity-30 transition-all"
+                  style={{ background: deliveryChatInput.trim() ? "linear-gradient(135deg, #ff00ff, #8b5cf6)" : "#1f1f2e" }}>
+                  <Send className="w-4 h-4 text-white" />
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

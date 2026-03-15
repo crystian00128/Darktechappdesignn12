@@ -1542,69 +1542,115 @@ app.get("/make-server-42377006/orders/driver/:username", async (c) => {
 app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
   try {
     const orderId = c.req.param("orderId");
-    const { status, vendorUsername, clientUsername, driverUsername } = await c.req.json();
+    const { status, vendorUsername, clientUsername, driverUsername, driverCommission } = await c.req.json();
     if (!status || !vendorUsername || !clientUsername) {
       return c.json({ success: false, error: "status, vendorUsername e clientUsername obrigatórios" }, 400);
     }
-    // Atualizar no vendedor
+    const now = new Date().toISOString();
+    
+    const patchOrder = (order: any) => {
+      order.status = status;
+      order.updatedAt = now;
+      if (driverUsername) order.driverUsername = driverUsername;
+      if (status === "driver_accepted") order.driverAcceptedAt = now;
+      if (status === "on_the_way") order.onTheWayAt = now;
+      if (status === "delivered") {
+        order.deliveredAt = now;
+        if (driverCommission) order.driverCommission = driverCommission;
+      }
+      return order;
+    };
+
     const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
     const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
     if (vIdx !== -1) {
-      vendorOrders[vIdx].status = status;
-      vendorOrders[vIdx].updatedAt = new Date().toISOString();
-      if (driverUsername) vendorOrders[vIdx].driverUsername = driverUsername;
+      patchOrder(vendorOrders[vIdx]);
       await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
     }
-    // Atualizar no cliente
     const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
     const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
     if (cIdx !== -1) {
-      clientOrders[cIdx].status = status;
-      clientOrders[cIdx].updatedAt = new Date().toISOString();
-      if (driverUsername) clientOrders[cIdx].driverUsername = driverUsername;
+      patchOrder(clientOrders[cIdx]);
       await kv.set(`orders:client:${clientUsername}`, clientOrders);
     }
-    // Se tem motorista, salvar/atualizar na lista do motorista
-    if (driverUsername) {
-      const driverOrders = await kv.get(`orders:driver:${driverUsername}`) || [];
+    const effectiveDriver = driverUsername || (vIdx !== -1 ? vendorOrders[vIdx]?.driverUsername : null) || (cIdx !== -1 ? clientOrders[cIdx]?.driverUsername : null);
+    if (effectiveDriver) {
+      const driverOrders = await kv.get(`orders:driver:${effectiveDriver}`) || [];
       const dIdx = driverOrders.findIndex((o: any) => o.id === orderId);
-      const orderData = vendorOrders[vIdx] || clientOrders[cIdx];
+      const orderData = vIdx !== -1 ? vendorOrders[vIdx] : (cIdx !== -1 ? clientOrders[cIdx] : null);
       if (dIdx !== -1) {
-        driverOrders[dIdx] = { ...driverOrders[dIdx], status, updatedAt: new Date().toISOString() };
+        patchOrder(driverOrders[dIdx]);
       } else if (orderData) {
-        driverOrders.push({ ...orderData, driverUsername });
+        driverOrders.push({ ...orderData, driverUsername: effectiveDriver });
       }
-      await kv.set(`orders:driver:${driverUsername}`, driverOrders);
+      await kv.set(`orders:driver:${effectiveDriver}`, driverOrders);
     }
 
-    // ═══ PUSH — Notify about order status changes ═══
+    // Auto-record driver commission earnings when delivered
+    if (status === "delivered" && effectiveDriver && driverCommission) {
+      try {
+        const earningsKey = `driver:earnings:${effectiveDriver}`;
+        const earnings = await kv.get(earningsKey) || [];
+        earnings.push({
+          orderId, vendorUsername, clientUsername,
+          total: driverCommission.orderTotal || 0,
+          commission: driverCommission.total || 0,
+          taxaFixa: driverCommission.fixa || 0,
+          taxaPercent: driverCommission.perc || 0,
+          deliveredAt: now,
+        });
+        await kv.set(earningsKey, earnings);
+      } catch (e) { console.log("Erro ao registrar comissao do motorista:", e); }
+    }
+
+    // PUSH notifications
     try {
       const statusLabels: Record<string, string> = {
         accepted: "✅ Pedido aceito!",
         preparing: "👨‍🍳 Pedido em preparo",
-        delivering: "🚗 Pedido saiu para entrega!",
-        delivered: "📦 Pedido entregue!",
+        delivering: "🚗 Atribuído para entrega!",
+        driver_accepted: "✅ Motorista aceitou!",
+        on_the_way: "🏍️ Motorista a caminho!",
+        delivered: "📦 Entrega concluída!",
         cancelled: "❌ Pedido cancelado",
       };
       const label = statusLabels[status] || `Pedido: ${status}`;
       
-      // Notify client about status change
       sendPushToUser(clientUsername, {
         title: label,
-        body: `Seu pedido #${orderId.slice(-6)} foi atualizado`,
+        body: status === "driver_accepted"
+          ? `O motorista aceitou seu pedido #${orderId.slice(-6)}! Envie sua localização no chat.`
+          : status === "on_the_way"
+          ? `O motorista está a caminho com seu pedido #${orderId.slice(-6)}!`
+          : status === "delivered"
+          ? `Seu pedido #${orderId.slice(-6)} foi entregue com sucesso!`
+          : `Seu pedido #${orderId.slice(-6)} foi atualizado`,
         tag: `order-status-${orderId}`,
         data: { url: "/", type: "order_status", orderId },
         vibrate: [200, 100, 200],
       }).catch(() => {});
       
-      // If delivering, also notify driver
-      if (driverUsername && status === "delivering") {
-        sendPushToUser(driverUsername, {
-          title: "🚗 Nova entrega!",
-          body: `Você tem uma nova entrega para realizar`,
+      if (effectiveDriver && status === "delivering") {
+        sendPushToUser(effectiveDriver, {
+          title: "🚗 Nova entrega atribuída!",
+          body: `Pedido #${orderId.slice(-6)} - Aceite para começar a entrega.`,
           tag: `delivery-${orderId}`,
           data: { url: "/", type: "new_delivery", orderId },
-          vibrate: [300, 100, 300],
+          vibrate: [300, 100, 300, 100, 300],
+        }).catch(() => {});
+      }
+      
+      if (["driver_accepted", "on_the_way", "delivered"].includes(status)) {
+        sendPushToUser(vendorUsername, {
+          title: label,
+          body: status === "driver_accepted"
+            ? `Motorista aceitou entrega #${orderId.slice(-6)}`
+            : status === "on_the_way"
+            ? `Motorista saiu para entregar #${orderId.slice(-6)}`
+            : `Pedido #${orderId.slice(-6)} entregue! Comissão registrada.`,
+          tag: `order-vendor-${orderId}`,
+          data: { url: "/", type: "order_status", orderId },
+          vibrate: [200, 100, 200],
         }).catch(() => {});
       }
     } catch (e) { /* non-critical */ }
@@ -1645,6 +1691,41 @@ app.get("/make-server-42377006/vendor-commission/:username", async (c) => {
     if (!user) return c.json({ success: false, error: "Usuário não encontrado" }, 404);
     const rate = user.adminCommissionRate !== undefined ? user.adminCommissionRate : 15;
     return c.json({ success: true, rate });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== DRIVER COMMISSION CONFIG ====================
+// Vendedor sets commission rates per driver
+app.put("/make-server-42377006/driver-commission/:vendorUsername/:driverUsername", async (c) => {
+  try {
+    const vendorUsername = c.req.param("vendorUsername");
+    const driverUsername = c.req.param("driverUsername");
+    const { taxaFixa, taxaPercent } = await c.req.json();
+    if (taxaFixa === undefined || taxaPercent === undefined) {
+      return c.json({ success: false, error: "taxaFixa e taxaPercent obrigatórios" }, 400);
+    }
+    const config = {
+      taxaFixa: Math.max(0, Number(taxaFixa)),
+      taxaPercent: Math.min(100, Math.max(0, Number(taxaPercent))),
+      updatedAt: new Date().toISOString(),
+    };
+    await kv.set(`driver_config:${vendorUsername}:${driverUsername}`, config);
+    console.log(`✅ Driver commission config saved: ${vendorUsername} -> ${driverUsername}:`, config);
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error("❌ Erro ao salvar driver config:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+app.get("/make-server-42377006/driver-commission/:vendorUsername/:driverUsername", async (c) => {
+  try {
+    const vendorUsername = c.req.param("vendorUsername");
+    const driverUsername = c.req.param("driverUsername");
+    const config = await kv.get(`driver_config:${vendorUsername}:${driverUsername}`);
+    return c.json({ success: true, config: config || { taxaFixa: 5, taxaPercent: 8 } });
   } catch (error) {
     return c.json({ success: false, error: String(error) }, 500);
   }

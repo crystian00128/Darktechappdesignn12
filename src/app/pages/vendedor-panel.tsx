@@ -9,7 +9,7 @@ import { useCallSystem } from "../hooks/useCallSystem";
 import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overlays";
 import { VendedorDashboardCharts } from "../components/vendedor-charts";
 import * as notif from "../services/notifications";
-import { PushToggle } from "../components/push-toggle";
+import * as pwa from "../services/pwa";
 import {
   LayoutDashboard, MessageSquare, Package, FileText, Ticket, Wallet, Truck,
   DollarSign, ShoppingBag, TrendingUp, Copy, Check, Power, Plus, X, Users,
@@ -1067,11 +1067,148 @@ function VendedorChat({ currentUsername, currentUserName, currentUserPhoto, clie
   );
 }
 
+// ─── Motorista Commission Tab Component ──────────────────────────────
+function MotoristaCommissionTab({ vendorUsername, motoristas }: { vendorUsername: string; motoristas: any[] }) {
+  const [configs, setConfigs] = useState<Record<string, { taxaFixa: string; taxaPercent: string }>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [loadedDrivers, setLoadedDrivers] = useState<Set<string>>(new Set());
+
+  // Load configs for all motoristas
+  useEffect(() => {
+    motoristas.forEach(async (m) => {
+      if (loadedDrivers.has(m.username)) return;
+      try {
+        const r = await api.getDriverCommission(vendorUsername, m.username);
+        if (r.success && r.config) {
+          setConfigs((prev) => ({
+            ...prev,
+            [m.username]: {
+              taxaFixa: String(r.config.taxaFixa ?? 5),
+              taxaPercent: String(r.config.taxaPercent ?? 8),
+            },
+          }));
+          setLoadedDrivers((prev) => new Set(prev).add(m.username));
+        }
+      } catch {
+        // Use defaults
+        setConfigs((prev) => ({
+          ...prev,
+          [m.username]: prev[m.username] || { taxaFixa: "5", taxaPercent: "8" },
+        }));
+      }
+    });
+  }, [motoristas, vendorUsername]);
+
+  const handleSave = async (driverUsername: string) => {
+    const cfg = configs[driverUsername];
+    if (!cfg) return;
+    setSaving(driverUsername);
+    try {
+      await api.setDriverCommission(vendorUsername, driverUsername, Number(cfg.taxaFixa), Number(cfg.taxaPercent));
+      setSaved(driverUsername);
+      sfx.playCodeAccepted();
+      setTimeout(() => setSaved(null), 2000);
+    } catch (err: any) {
+      sfx.playError();
+      console.error("Erro ao salvar taxa:", err);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const updateConfig = (username: string, field: "taxaFixa" | "taxaPercent", value: string) => {
+    setConfigs((prev) => ({
+      ...prev,
+      [username]: { ...(prev[username] || { taxaFixa: "5", taxaPercent: "8" }), [field]: value },
+    }));
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <GlowCard glowColor="#ff00ff">
+        <div className="p-4">
+          <h2 className="text-white font-bold text-lg mb-3"><NeonText color="#ff00ff">Comissoes Motoristas</NeonText></h2>
+          {motoristas.length > 0 ? (
+            <div className="space-y-3">
+              {motoristas.map((m) => {
+                const cfg = configs[m.username] || { taxaFixa: "5", taxaPercent: "8" };
+                const isSaving = saving === m.username;
+                const isSaved = saved === m.username;
+                return (
+                  <div key={m.username} className="p-4 bg-[#0a0a12]/60 rounded-xl border border-[#1f1f2e]/40 space-y-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <NeonAvatar photo={m.photo} name={m.name} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-white font-semibold text-sm truncate">{m.name}</h3>
+                        <p className="text-gray-500 text-xs">@{m.username}</p>
+                      </div>
+                      {isSaved && (
+                        <motion.span initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }}
+                          className="text-[#00ff41] text-[10px] font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Salvo!
+                        </motion.span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-400 mb-1">Taxa Fixa (R$)</label>
+                        <input type="number" value={cfg.taxaFixa} step="0.01" min="0"
+                          onChange={(e) => updateConfig(m.username, "taxaFixa", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#ff00ff]/50 transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-400 mb-1">% da Venda</label>
+                        <input type="number" value={cfg.taxaPercent} min="0" max="100"
+                          onChange={(e) => updateConfig(m.username, "taxaPercent", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#ff00ff]/50 transition-all" />
+                      </div>
+                    </div>
+                    {/* Preview */}
+                    <div className="bg-[#0c0c14] rounded-lg p-2.5 border border-[#1f1f2e]/30">
+                      <p className="text-gray-500 text-[10px] mb-1">Exemplo: venda de R$ 100</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-[11px]">Fixo + % = </span>
+                        <NeonText color="#00ff41" className="font-bold text-sm">
+                          R$ {(Number(cfg.taxaFixa || 0) + (Number(cfg.taxaPercent || 0) / 100) * 100).toFixed(2)}
+                        </NeonText>
+                      </div>
+                    </div>
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => handleSave(m.username)}
+                      disabled={isSaving}
+                      className="w-full py-2.5 font-bold text-white text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                      style={{ background: "linear-gradient(135deg, #ff00ff 0%, #8b5cf6 100%)" }}
+                    >
+                      {isSaving ? (
+                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full" />
+                      ) : isSaved ? (
+                        <><Check className="w-3.5 h-3.5" /> Salvo!</>
+                      ) : (
+                        "Salvar Comissao"
+                      )}
+                    </motion.button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-gray-600 text-center py-6 text-xs">Nenhum motorista cadastrado</p>
+          )}
+        </div>
+      </GlowCard>
+    </motion.div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────
 export function VendedorPanel() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [isOnline, setIsOnline] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => {
+    try { return localStorage.getItem("vendedor_online_" + JSON.parse(localStorage.getItem("currentUser") || "{}").username) === "true"; } catch { return false; }
+  });
+  const [statusToast, setStatusToast] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | false>(false);
   const [showProductModal, setShowProductModal] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: "", description: "", price: "" });
@@ -1092,6 +1229,9 @@ export function VendedorPanel() {
   const [pixError, setPixError] = useState("");
   const [adminCommissionRate, setAdminCommissionRate] = useState(15);
   const pixPollingRef = useRef<any>(null);
+  const [driverSelectOrder, setDriverSelectOrder] = useState<any>(null);
+  const [driverPresence, setDriverPresence] = useState<Record<string, boolean>>({});
+  const [assigningDriver, setAssigningDriver] = useState<string | null>(null);
 
   const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
   const isAdminViewing = currentUser.adminViewing === true;
@@ -1147,8 +1287,9 @@ export function VendedorPanel() {
     if (activeTab === "convite") fetchCodes();
     if (activeTab === "dashboard") { loadMetrics(); loadMyUsers(); }
     if (activeTab === "produtos") loadProducts();
+    if (activeTab === "pedidos") loadOrders();
   }, [activeTab]);
-  useEffect(() => { const i = setInterval(() => { fetchCodes(); loadMyUsers(); }, 8000); return () => clearInterval(i); }, []);
+  useEffect(() => { const i = setInterval(() => { fetchCodes(); loadMyUsers(); loadOrders(); }, 8000); return () => clearInterval(i); }, []);
   useEffect(() => { return () => { if (pixPollingRef.current) clearInterval(pixPollingRef.current); }; }, []);
 
   const loadMyUsers = async () => {
@@ -1160,12 +1301,35 @@ export function VendedorPanel() {
 
   const handleToggleOnline = async () => {
     const n = !isOnline; setIsOnline(n);
+    localStorage.setItem("vendedor_online_" + currentUser.username, String(n));
+    sfx.playToggle(n);
     try { await api.setUserStatus(currentUser.username, n); } catch (e) { console.error(e); }
+    if (n) {
+      pwa.setPushEnabledForUser(currentUser.username, true);
+      pwa.registerPushSubscription(currentUser.username).catch(() => {});
+      setStatusToast("🟢 Sua loja está Online e você receberá notificações");
+    } else {
+      pwa.setPushEnabledForUser(currentUser.username, false);
+      pwa.unregisterPushSubscription(currentUser.username).catch(() => {});
+      setStatusToast("🔴 Sua loja está Fechada e você não receberá notificações");
+    }
+    setTimeout(() => setStatusToast(null), 4000);
   };
 
+  // Re-register push on mount if online
+  useEffect(() => {
+    if (isOnline && currentUser.username) {
+      api.setUserStatus(currentUser.username, true).catch(() => {});
+      pwa.setPushEnabledForUser(currentUser.username, true);
+      pwa.registerPushSubscription(currentUser.username).catch(() => {});
+    }
+  }, []);
+
+  const pendingOrdersCount = orders.filter((o: any) => o.status === "pending").length;
   const menuItems = [
     { icon: <LayoutDashboard className="w-5 h-5" />, label: "Dashboard", id: "dashboard" },
     { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread },
+    { icon: <ClipboardList className="w-5 h-5" />, label: "Pedidos", id: "pedidos", badge: pendingOrdersCount || undefined },
     { icon: <Package className="w-5 h-5" />, label: "Produtos", id: "produtos" },
     { icon: <FileText className="w-5 h-5" />, label: "Relatorios", id: "relatorios" },
     { icon: <Ticket className="w-5 h-5" />, label: "Convites", id: "convite" },
@@ -1192,7 +1356,38 @@ export function VendedorPanel() {
   const handleDeleteProduct = async (id: string) => { try { await api.deleteProduct(currentUser.username, id); setProdutos((p) => p.filter((x) => x.id !== id)); } catch (e: any) { alert("Erro: " + e.message); } };
 
   const handleUpdateOrderStatus = async (order: any, newStatus: string) => {
+    // Intercept "delivering" to open driver selection modal
+    if (newStatus === "delivering" && !order.driverUsername) {
+      setDriverSelectOrder(order);
+      // Load driver presence
+      if (motoristas.length > 0) {
+        api.checkPresence(motoristas.map((m: any) => m.username)).then((res) => {
+          if (res.success) setDriverPresence(res.presence || {});
+        }).catch(() => {});
+      }
+      return;
+    }
     try { await api.updateOrderStatus(order.id, { status: newStatus, vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: order.driverUsername }); notif.notifyOrderStatus(newStatus, order.id); setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: newStatus, updatedAt: new Date().toISOString() } : o))); } catch (e: any) { alert("Erro: " + e.message); }
+  };
+
+  const handleAssignDriverAndDeliver = async (driverUsername: string) => {
+    if (!driverSelectOrder || assigningDriver) return;
+    setAssigningDriver(driverUsername);
+    try {
+      await api.updateOrderStatus(driverSelectOrder.id, {
+        status: "delivering",
+        vendorUsername: driverSelectOrder.vendorUsername,
+        clientUsername: driverSelectOrder.clientUsername,
+        driverUsername,
+      });
+      notif.notifyOrderStatus("delivering", driverSelectOrder.id);
+      setOrders((prev) => prev.map((o) => (o.id === driverSelectOrder.id ? { ...o, status: "delivering", driverUsername, updatedAt: new Date().toISOString() } : o)));
+      setDriverSelectOrder(null);
+    } catch (e: any) {
+      alert("Erro ao atribuir motorista: " + e.message);
+    } finally {
+      setAssigningDriver(null);
+    }
   };
 
   const FIXED_FEE = 0.99; // Taxa fixa constante descontada do vendedor
@@ -1287,7 +1482,8 @@ export function VendedorPanel() {
 
   const statusLabels: Record<string, { label: string; color: string }> = {
     pending: { label: "Pendente", color: "#ff9f00" }, accepted: { label: "Aceito", color: "#00f0ff" },
-    preparing: { label: "Preparando", color: "#8b5cf6" }, delivering: { label: "Entregando", color: "#ff00ff" },
+    preparing: { label: "Preparando", color: "#8b5cf6" }, delivering: { label: "Enviado", color: "#ff9f00" },
+    driver_accepted: { label: "Motorista Aceitou", color: "#00f0ff" }, on_the_way: { label: "A Caminho", color: "#ff00ff" },
     delivered: { label: "Entregue", color: "#00ff41" }, cancelled: { label: "Cancelado", color: "#ff006e" },
   };
 
@@ -1319,12 +1515,11 @@ export function VendedorPanel() {
   // Online/Offline toggle as header action
   const headerAction = (
     <div className="flex items-center gap-2">
-      <PushToggle username={currentUser.username} accentColor="#00f0ff" compact />
       {isOnline && (
         <motion.div animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 2, repeat: Infinity }}
           className="flex items-center gap-1.5 px-2 py-0.5 bg-[#00ff41]/15 rounded-full">
           <div className="w-1.5 h-1.5 bg-[#00ff41] rounded-full" />
-          <span className="text-[#00ff41] text-[11px] font-medium">Aberta</span>
+          <span className="text-[#00ff41] text-[11px] font-medium">Online</span>
         </motion.div>
       )}
       <motion.button onClick={handleToggleOnline} whileTap={{ scale: 0.9 }}
@@ -1363,8 +1558,26 @@ export function VendedorPanel() {
         </motion.div>
       )}
 
+      {/* Status Toast */}
+      <AnimatePresence>
+        {statusToast && (
+          <motion.div initial={{ opacity: 0, y: -40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -40 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] px-5 py-3 rounded-2xl text-white text-sm font-semibold border backdrop-blur-2xl shadow-[0_0_40px_rgba(0,0,0,0.6)] max-w-[90vw] text-center"
+            style={{ background: statusToast.includes("Online") ? "linear-gradient(135deg, rgba(0,255,65,0.2), rgba(0,240,255,0.15))" : "linear-gradient(135deg, rgba(255,0,60,0.2), rgba(255,0,110,0.15))", borderColor: statusToast.includes("Online") ? "rgba(0,255,65,0.4)" : "rgba(255,0,60,0.4)" }}
+          >
+            {statusToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className={isAdminViewing ? "pt-[40px]" : ""}>
         <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Vendedor" headerAction={headerAction}
+          onLogout={() => {
+            localStorage.setItem("vendedor_online_" + currentUser.username, "false");
+            pwa.setPushEnabledForUser(currentUser.username, false);
+            pwa.unregisterPushSubscription(currentUser.username).catch(() => {});
+            api.setUserStatus(currentUser.username, false).catch(() => {});
+          }}
           centerAction={
             <motion.button
               onClick={() => { sfx.playSuccess(); setShowPixModal(true); }}
@@ -1415,6 +1628,265 @@ export function VendedorPanel() {
               motoristas={chatContacts.filter((c) => c.role === "motorista")}
               onStartCall={handleStartCall}
             />
+          )}
+
+          {/* ===================== PEDIDOS ===================== */}
+          {activeTab === "pedidos" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+              {/* Order Stats */}
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { label: "Pendentes", count: orders.filter((o: any) => o.status === "pending").length, color: "#ff9f00", icon: <Clock className="w-3.5 h-3.5" /> },
+                  { label: "Aceitos", count: orders.filter((o: any) => o.status === "accepted" || o.status === "preparing").length, color: "#00f0ff", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
+                  { label: "Entregando", count: orders.filter((o: any) => o.status === "delivering").length, color: "#ff00ff", icon: <Truck className="w-3.5 h-3.5" /> },
+                  { label: "Entregues", count: orders.filter((o: any) => o.status === "delivered").length, color: "#00ff41", icon: <Check className="w-3.5 h-3.5" /> },
+                ].map((stat) => (
+                  <motion.div key={stat.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                    className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-2.5 text-center"
+                  >
+                    <div className="flex items-center justify-center mb-1" style={{ color: stat.color }}>{stat.icon}</div>
+                    <p className="text-white font-bold text-lg" style={{ textShadow: `0 0 8px ${stat.color}30` }}>{stat.count}</p>
+                    <p className="text-gray-500 text-[9px] uppercase tracking-wider">{stat.label}</p>
+                  </motion.div>
+                ))}
+              </div>
+
+              {/* Pending Orders (need attention) */}
+              {orders.filter((o: any) => o.status === "pending").length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ duration: 1, repeat: Infinity }}>
+                      <Clock className="w-4 h-4 text-[#ff9f00]" />
+                    </motion.div>
+                    <h3 className="text-white font-bold text-sm">Novos Pedidos</h3>
+                    <motion.span animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
+                      className="ml-auto px-2 py-0.5 bg-[#ff9f00]/20 text-[#ff9f00] rounded-full text-[10px] font-bold">
+                      {orders.filter((o: any) => o.status === "pending").length}
+                    </motion.span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {orders.filter((o: any) => o.status === "pending").map((order: any, idx: number) => (
+                      <motion.div key={order.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
+                        className="relative overflow-hidden bg-[#12121a]/90 border border-[#ff9f00]/30 rounded-2xl shadow-[0_0_20px_rgba(255,159,0,0.06)]"
+                      >
+                        <motion.div className="absolute top-0 left-0 right-0 h-[2px]"
+                          style={{ background: "linear-gradient(90deg, transparent, #ff9f00, transparent)" }}
+                          animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity }}
+                        />
+                        <div className="p-3.5">
+                          <div className="flex items-center justify-between mb-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-[#ff9f00]/15 flex items-center justify-center">
+                                <ShoppingBag className="w-4 h-4 text-[#ff9f00]" />
+                              </div>
+                              <div>
+                                <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
+                                <p className="text-gray-400 text-[10px]">@{order.clientUsername}</p>
+                              </div>
+                            </div>
+                            <motion.div animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
+                              className="px-2.5 py-1 bg-[#ff9f00]/15 rounded-full flex items-center gap-1"
+                            >
+                              <Clock className="w-3 h-3 text-[#ff9f00]" />
+                              <span className="text-[#ff9f00] font-bold text-[10px]">NOVO</span>
+                            </motion.div>
+                          </div>
+                          {order.deliveryAddress && (
+                            <div className="flex items-start gap-1.5 mb-2.5 px-1">
+                              <Users className="w-3.5 h-3.5 text-[#8b5cf6] shrink-0 mt-0.5" />
+                              <span className="text-gray-300 text-[11px] leading-tight">{order.deliveryAddress}</span>
+                            </div>
+                          )}
+                          <div className="bg-[#0a0a12]/60 rounded-xl p-2.5 mb-2.5">
+                            {order.items?.map((item: any, i: number) => (
+                              <div key={i} className="flex justify-between text-[11px] py-0.5">
+                                <span className="text-gray-300 truncate mr-2">{item.name} x{item.qty || 1}</span>
+                                <span className="text-white font-medium shrink-0">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
+                              </div>
+                            ))}
+                            <div className="flex justify-between border-t border-[#1f1f2e]/60 pt-1.5 mt-1.5">
+                              <span className="text-gray-400 text-[11px] font-medium">Total</span>
+                              <span className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <motion.button whileTap={{ scale: 0.95 }}
+                              onClick={() => handleUpdateOrderStatus(order, "cancelled")}
+                              className="flex-1 py-2.5 rounded-xl bg-[#ff006e]/10 text-[#ff006e] font-semibold text-xs border border-[#ff006e]/20 hover:bg-[#ff006e]/20 transition-colors flex items-center justify-center gap-1.5"
+                            >
+                              <X className="w-3.5 h-3.5" /> Recusar
+                            </motion.button>
+                            <motion.button whileTap={{ scale: 0.95 }}
+                              onClick={() => handleUpdateOrderStatus(order, "accepted")}
+                              className="flex-1 py-2.5 rounded-xl text-black font-bold text-xs flex items-center justify-center gap-1.5"
+                              style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 20px rgba(0,255,65,0.3)" }}
+                            >
+                              <Check className="w-3.5 h-3.5" /> Aceitar
+                            </motion.button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Active Orders (accepted, preparing, delivering) */}
+              {orders.filter((o: any) => ["accepted", "preparing", "delivering"].includes(o.status)).length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-[#00f0ff]" />
+                    <h3 className="text-white font-bold text-sm">Em Andamento</h3>
+                    <span className="ml-auto px-2 py-0.5 bg-[#00f0ff]/20 text-[#00f0ff] rounded-full text-[10px] font-bold">
+                      {orders.filter((o: any) => ["accepted", "preparing", "delivering"].includes(o.status)).length}
+                    </span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {orders.filter((o: any) => ["accepted", "preparing", "delivering", "driver_accepted", "on_the_way"].includes(o.status)).map((order: any) => {
+                      const statusInfo = statusLabels[order.status] || { label: order.status, color: "#888" };
+                      const statusSteps = ["accepted", "preparing", "delivering", "driver_accepted", "on_the_way", "delivered"];
+                      const currentStepIdx = statusSteps.indexOf(order.status);
+                      const nextStatus = currentStepIdx >= 0 && currentStepIdx < statusSteps.length - 1 ? statusSteps[currentStepIdx + 1] : null;
+                      const nextLabel = nextStatus ? (statusLabels[nextStatus]?.label || nextStatus) : null;
+
+                      return (
+                        <GlowCard key={order.id} glowColor={statusInfo.color}>
+                          <div className="p-3.5">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${statusInfo.color}15` }}>
+                                  {order.status === "delivering" ? <Truck className="w-4 h-4" style={{ color: statusInfo.color }} /> : <ShoppingBag className="w-4 h-4" style={{ color: statusInfo.color }} />}
+                                </div>
+                                <div>
+                                  <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
+                                  <p className="text-gray-400 text-[10px]">@{order.clientUsername}</p>
+                                </div>
+                              </div>
+                              <motion.span
+                                className="px-2.5 py-1 rounded-full font-bold text-[10px] border"
+                                style={{ color: statusInfo.color, backgroundColor: `${statusInfo.color}15`, borderColor: `${statusInfo.color}30` }}
+                                animate={{ boxShadow: [`0 0 4px ${statusInfo.color}00`, `0 0 10px ${statusInfo.color}30`, `0 0 4px ${statusInfo.color}00`] }}
+                                transition={{ duration: 2, repeat: Infinity }}
+                              >
+                                {statusInfo.label.toUpperCase()}
+                              </motion.span>
+                            </div>
+
+                            {/* Progress Steps */}
+                            <div className="flex items-center gap-1 mb-3 px-1">
+                              {statusSteps.map((step, i) => {
+                                const isActive = statusSteps.indexOf(order.status) >= i;
+                                const stepColor = isActive ? statusInfo.color : "#1f1f2e";
+                                return (
+                                  <div key={step} className="flex items-center flex-1">
+                                    <motion.div
+                                      className="w-2 h-2 rounded-full shrink-0"
+                                      style={{ backgroundColor: stepColor }}
+                                      animate={statusSteps.indexOf(order.status) === i ? { scale: [1, 1.4, 1] } : {}}
+                                      transition={{ duration: 1.5, repeat: Infinity }}
+                                    />
+                                    {i < statusSteps.length - 1 && (
+                                      <div className="flex-1 h-0.5 mx-0.5 rounded" style={{ backgroundColor: statusSteps.indexOf(order.status) > i ? statusInfo.color : "#1f1f2e" }} />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Order Items Summary */}
+                            <div className="bg-[#0a0a12]/60 rounded-lg p-2 mb-2.5">
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-gray-400">{order.items?.length || 0} item(ns)</span>
+                                <span className="text-white font-bold">R$ {(order.total || 0).toFixed(2)}</span>
+                              </div>
+                              {order.driverUsername && (
+                                <div className="flex items-center gap-1 mt-1">
+                                  <Truck className="w-3 h-3 text-[#ff00ff]" />
+                                  <span className="text-[#ff00ff] text-[10px] font-medium">@{order.driverUsername}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Next Status Button - only show actionable buttons for vendor */}
+                            {nextStatus && ["preparing", "delivering"].includes(nextStatus) && (
+                              <motion.button whileTap={{ scale: 0.95 }}
+                                onClick={() => handleUpdateOrderStatus(order, nextStatus)}
+                                className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
+                                style={{
+                                  background: `linear-gradient(135deg, ${statusInfo.color}, #8b5cf6)`,
+                                  color: "#fff",
+                                  boxShadow: `0 0 15px ${statusInfo.color}20`,
+                                }}
+                              >
+                                {nextStatus === "preparing" && <><Package className="w-3.5 h-3.5" /> Preparar Pedido</>}
+                                {nextStatus === "delivering" && <><Truck className="w-3.5 h-3.5" /> Enviar para Entrega</>}
+                              </motion.button>
+                            )}
+                            {/* Informational status badges for driver-controlled steps */}
+                            {["delivering", "driver_accepted", "on_the_way"].includes(order.status) && (
+                              <div className="w-full py-2 rounded-xl text-[10px] font-medium text-center flex items-center justify-center gap-1.5 border"
+                                style={{ borderColor: `${statusInfo.color}30`, color: statusInfo.color, background: `${statusInfo.color}08` }}>
+                                {order.status === "delivering" && <><Loader2 className="w-3 h-3 animate-spin" /> Aguardando motorista aceitar</>}
+                                {order.status === "driver_accepted" && <><Check className="w-3 h-3" /> Motorista aceitou - Conversando com cliente</>}
+                                {order.status === "on_the_way" && <><Navigation className="w-3 h-3" /> Motorista a caminho da entrega</>}
+                              </div>
+                            )}
+                          </div>
+                        </GlowCard>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Completed/Cancelled Orders */}
+              {orders.filter((o: any) => ["delivered", "cancelled"].includes(o.status)).length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle2 className="w-4 h-4 text-gray-500" />
+                    <h3 className="text-gray-400 font-bold text-sm">Finalizados</h3>
+                    <span className="ml-auto text-gray-600 text-[10px]">
+                      {orders.filter((o: any) => ["delivered", "cancelled"].includes(o.status)).length} pedido(s)
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {orders.filter((o: any) => ["delivered", "cancelled"].includes(o.status)).slice(0, 10).map((order: any) => {
+                      const isCancelled = order.status === "cancelled";
+                      return (
+                        <div key={order.id} className={`flex items-center gap-3 p-3 rounded-xl border ${isCancelled ? "bg-[#ff006e]/5 border-[#ff006e]/15" : "bg-[#00ff41]/5 border-[#00ff41]/15"}`}>
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isCancelled ? "bg-[#ff006e]/15" : "bg-[#00ff41]/15"}`}>
+                            {isCancelled ? <X className="w-3.5 h-3.5 text-[#ff006e]" /> : <Check className="w-3.5 h-3.5 text-[#00ff41]" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-semibold text-xs">#{order.id.slice(-6).toUpperCase()}</p>
+                            <p className="text-gray-500 text-[10px]">@{order.clientUsername}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</p>
+                            <p className={`text-[10px] font-medium ${isCancelled ? "text-[#ff006e]" : "text-[#00ff41]"}`}>
+                              {isCancelled ? "Cancelado" : "Entregue"}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty State */}
+              {orders.length === 0 && (
+                <GlowCard>
+                  <div className="p-8 text-center">
+                    <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
+                      <ClipboardList className="w-10 h-10 text-gray-700 mx-auto mb-2" />
+                    </motion.div>
+                    <p className="text-gray-500 text-sm">Nenhum pedido ainda</p>
+                    <p className="text-gray-600 text-[10px] mt-1">Os pedidos dos seus clientes aparecerao aqui</p>
+                  </div>
+                </GlowCard>
+              )}
+            </motion.div>
           )}
 
           {/* ===================== PRODUTOS ===================== */}
@@ -1709,46 +2181,214 @@ export function VendedorPanel() {
 
           {/* ===================== TAXA MOTORISTA ===================== */}
           {activeTab === "taxa-motorista" && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <GlowCard glowColor="#ff00ff">
-                <div className="p-4">
-                  <h2 className="text-white font-bold text-lg mb-3"><NeonText color="#ff00ff">Comissoes Motoristas</NeonText></h2>
-                  {motoristas.length > 0 ? (
-                    <div className="space-y-3">
-                      {motoristas.map((m) => (
-                        <div key={m.username} className="p-4 bg-[#0a0a12]/60 rounded-xl border border-[#1f1f2e]/40 space-y-2.5">
-                          <div className="flex items-center gap-2.5">
-                            <NeonAvatar photo={m.photo} name={m.name} size="md" />
-                            <div className="min-w-0">
-                              <h3 className="text-white font-semibold text-sm truncate">{m.name}</h3>
-                              <p className="text-gray-500 text-xs">@{m.username}</p>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <label className="block text-[11px] font-medium text-gray-400 mb-1">Taxa Fixa (R$)</label>
-                              <input type="number" defaultValue="5.00" step="0.01"
-                                className="w-full px-2.5 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#ff00ff]/50 transition-all" />
-                            </div>
-                            <div>
-                              <label className="block text-[11px] font-medium text-gray-400 mb-1">% da Venda</label>
-                              <input type="number" defaultValue="8" min="0" max="100"
-                                className="w-full px-2.5 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#ff00ff]/50 transition-all" />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-gray-600 text-center py-6 text-xs">Nenhum motorista cadastrado</p>
-                  )}
-                </div>
-              </GlowCard>
-            </motion.div>
+            <MotoristaCommissionTab vendorUsername={currentUser.username} motoristas={motoristas} />
           )}
 
         </SidebarLayout>
       </div>
+
+      {/* ── Driver Selection Modal ── */}
+      <AnimatePresence>
+        {driverSelectOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/90 backdrop-blur-lg z-[100] flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget && !assigningDriver) setDriverSelectOrder(null); }}
+          >
+            <motion.div initial={{ scale: 0.85, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.85, opacity: 0, y: 20 }}
+              className="relative max-w-sm w-full max-h-[85vh] flex flex-col"
+            >
+              <motion.div className="absolute inset-0 rounded-2xl p-[1.5px]"
+                style={{ background: "conic-gradient(from 0deg, #ff00ff30, transparent, #8b5cf630, transparent)" }}
+                animate={{ rotate: [0, 360] }} transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+              />
+              <div className="relative bg-[#0a0a12] rounded-2xl border border-[#1f1f2e]/30 overflow-hidden m-[1.5px] flex flex-col max-h-[85vh]">
+                {/* Header */}
+                <div className="px-5 pt-5 pb-3 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <motion.div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                      style={{ background: "linear-gradient(135deg, #ff00ff20, #8b5cf620)" }}
+                      animate={{ boxShadow: ["0 0 8px rgba(255,0,255,0.1)", "0 0 16px rgba(255,0,255,0.25)", "0 0 8px rgba(255,0,255,0.1)"] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    >
+                      <Truck className="w-5 h-5 text-[#ff00ff]" />
+                    </motion.div>
+                    <div>
+                      <h3 className="text-white font-bold text-base">
+                        <NeonText color="#ff00ff">Selecionar Motorista</NeonText>
+                      </h3>
+                      <p className="text-gray-500 text-[11px]">
+                        Pedido #{driverSelectOrder.id?.slice(-6).toUpperCase()} — R$ {(driverSelectOrder.total || 0).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                  {!assigningDriver && (
+                    <button onClick={() => setDriverSelectOrder(null)} className="p-1.5 hover:bg-[#1f1f2e] rounded-lg text-gray-500 transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Order summary */}
+                <div className="px-5 pb-3 shrink-0">
+                  <div className="bg-[#0c0c14] rounded-xl p-3 border border-[#1f1f2e]/40">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Package className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      <span className="text-gray-400 text-[11px] font-medium">Itens do pedido</span>
+                    </div>
+                    <div className="space-y-1">
+                      {driverSelectOrder.items?.slice(0, 4).map((item: any, i: number) => (
+                        <div key={i} className="flex justify-between text-[11px]">
+                          <span className="text-gray-300 truncate mr-2">{item.name} x{item.qty || 1}</span>
+                          <span className="text-white font-medium shrink-0">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
+                        </div>
+                      ))}
+                      {(driverSelectOrder.items?.length || 0) > 4 && (
+                        <p className="text-gray-600 text-[10px]">+{driverSelectOrder.items.length - 4} mais...</p>
+                      )}
+                    </div>
+                    <div className="flex justify-between border-t border-[#1f1f2e]/60 pt-1.5 mt-1.5">
+                      <span className="text-gray-400 text-[11px] font-medium">Total</span>
+                      <span className="text-white font-bold text-xs">R$ {(driverSelectOrder.total || 0).toFixed(2)}</span>
+                    </div>
+                    {driverSelectOrder.clientUsername && (
+                      <div className="flex items-center gap-1 mt-1.5">
+                        <Users className="w-3 h-3 text-[#00f0ff]" />
+                        <span className="text-[#00f0ff] text-[10px] font-medium">@{driverSelectOrder.clientUsername}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Driver list */}
+                <div className="flex-1 overflow-y-auto px-5 pb-5">
+                  <p className="text-gray-400 text-xs font-medium mb-2 flex items-center gap-1.5">
+                    <Truck className="w-3 h-3 text-[#ff00ff]" />
+                    Motoristas disponíveis ({motoristas.length})
+                  </p>
+
+                  {motoristas.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
+                        <Truck className="w-10 h-10 text-gray-700 mx-auto mb-2" />
+                      </motion.div>
+                      <p className="text-gray-500 text-sm">Nenhum motorista vinculado</p>
+                      <p className="text-gray-600 text-[10px] mt-1">Gere um código de convite para motoristas</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Online drivers first */}
+                      {[...motoristas].sort((a: any, b: any) => {
+                        const aOnline = driverPresence[a.username] ? 1 : 0;
+                        const bOnline = driverPresence[b.username] ? 1 : 0;
+                        return bOnline - aOnline;
+                      }).map((driver: any) => {
+                        const isOnlineDriver = driverPresence[driver.username];
+                        const isAssigning = assigningDriver === driver.username;
+                        return (
+                          <motion.div key={driver.username}
+                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+                            className={`relative overflow-hidden rounded-xl border transition-all ${
+                              isOnlineDriver
+                                ? "bg-[#ff00ff]/5 border-[#ff00ff]/20 hover:border-[#ff00ff]/40"
+                                : "bg-[#12121a] border-[#1f1f2e]/40 hover:border-[#1f1f2e]"
+                            }`}
+                          >
+                            <div className="p-3 flex items-center gap-3">
+                              {/* Avatar */}
+                              <div className="relative shrink-0">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#ff00ff]/20 to-[#8b5cf6]/15 flex items-center justify-center overflow-hidden">
+                                  {driver.photo ? (
+                                    <img src={driver.photo} alt={driver.name} className="w-full h-full object-cover rounded-full" />
+                                  ) : (
+                                    <span className="text-white font-bold text-sm">{(driver.name || driver.username || "?").charAt(0).toUpperCase()}</span>
+                                  )}
+                                </div>
+                                <motion.div
+                                  className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0a0a12] ${isOnlineDriver ? "bg-[#00ff41]" : "bg-gray-600"}`}
+                                  animate={isOnlineDriver ? { scale: [1, 1.3, 1], boxShadow: ["0 0 3px rgba(0,255,65,0.5)", "0 0 8px rgba(0,255,65,0.8)", "0 0 3px rgba(0,255,65,0.5)"] } : {}}
+                                  transition={{ duration: 1.5, repeat: Infinity }}
+                                />
+                              </div>
+
+                              {/* Info */}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-white font-bold text-sm truncate">{driver.name || driver.username}</p>
+                                <p className="text-gray-500 text-[10px] truncate">@{driver.username}</p>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  {isOnlineDriver ? (
+                                    <>
+                                      <motion.div className="w-1.5 h-1.5 rounded-full bg-[#00ff41]"
+                                        animate={{ scale: [1, 1.3, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
+                                      />
+                                      <span className="text-[#00ff41] text-[10px] font-medium">Online</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                                      <span className="text-gray-600 text-[10px] font-medium">Offline</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Assign button */}
+                              <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={() => handleAssignDriverAndDeliver(driver.username)}
+                                disabled={!!assigningDriver}
+                                className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shrink-0 ${
+                                  isAssigning
+                                    ? "bg-[#1f1f2e] text-gray-500"
+                                    : isOnlineDriver
+                                      ? "text-white shadow-[0_0_15px_rgba(255,0,255,0.2)]"
+                                      : "bg-[#1f1f2e] text-gray-300 hover:bg-[#2a2a3e]"
+                                }`}
+                                style={!isAssigning && isOnlineDriver ? { background: "linear-gradient(135deg, #ff00ff, #8b5cf6)" } : undefined}
+                              >
+                                {isAssigning ? (
+                                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                    className="w-3.5 h-3.5 border-2 border-gray-600 border-t-[#ff00ff] rounded-full"
+                                  />
+                                ) : (
+                                  <>
+                                    <Send className="w-3 h-3" />
+                                    Atribuir
+                                  </>
+                                )}
+                              </motion.button>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Skip driver option */}
+                  {motoristas.length > 0 && (
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => {
+                        // Send to delivery without assigning a driver
+                        const order = driverSelectOrder;
+                        setDriverSelectOrder(null);
+                        api.updateOrderStatus(order.id, { status: "delivering", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername }).then(() => {
+                          notif.notifyOrderStatus("delivering", order.id);
+                          setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "delivering", updatedAt: new Date().toISOString() } : o)));
+                        }).catch((e: any) => alert("Erro: " + e.message));
+                      }}
+                      disabled={!!assigningDriver}
+                      className="w-full mt-3 py-2.5 bg-[#1f1f2e]/60 text-gray-500 rounded-xl text-[11px] font-medium hover:text-gray-300 hover:bg-[#1f1f2e] transition-all disabled:opacity-40 flex items-center justify-center gap-1.5"
+                    >
+                      <Truck className="w-3 h-3" />
+                      Enviar sem atribuir motorista
+                    </motion.button>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── PIX Generation Modal ── */}
       <AnimatePresence>

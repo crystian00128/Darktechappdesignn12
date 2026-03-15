@@ -262,7 +262,7 @@ export async function getDriverOrders(username: string) {
   return fetchAPI(`/orders/driver/${username}`);
 }
 
-export async function updateOrderStatus(orderId: string, data: { status: string; vendorUsername: string; clientUsername: string; driverUsername?: string }) {
+export async function updateOrderStatus(orderId: string, data: { status: string; vendorUsername: string; clientUsername: string; driverUsername?: string; driverCommission?: { fixa: number; perc: number; total: number; orderTotal: number } }) {
   return fetchAPI(`/orders/${orderId}/status`, {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -353,6 +353,18 @@ export async function getVendorCommission(username: string) {
 
 export async function setVendorCommission(username: string, rate: number) {
   return fetchAPI(`/vendor-commission/${username}`, { method: 'PUT', body: JSON.stringify({ rate }) });
+}
+
+// ==================== DRIVER COMMISSION CONFIG ====================
+export async function getDriverCommission(vendorUsername: string, driverUsername: string) {
+  return fetchAPI(`/driver-commission/${vendorUsername}/${driverUsername}`);
+}
+
+export async function setDriverCommission(vendorUsername: string, driverUsername: string, taxaFixa: number, taxaPercent: number) {
+  return fetchAPI(`/driver-commission/${vendorUsername}/${driverUsername}`, {
+    method: 'PUT',
+    body: JSON.stringify({ taxaFixa, taxaPercent }),
+  });
 }
 
 // ==================== CALL SIGNALING ====================

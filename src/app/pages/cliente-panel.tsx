@@ -17,6 +17,11 @@ import {
   QrCode,
   Minus,
   Copy,
+  Truck,
+  Clock,
+  ChefHat,
+  Navigation,
+  CheckCircle2,
 } from "lucide-react";
 import { useUserCreator } from "../hooks/useUserCreator";
 import { useCallSystem } from "../hooks/useCallSystem";
@@ -25,6 +30,7 @@ import * as api from "../services/api";
 import * as sfx from "../services/sounds";
 import { ChatPanel } from "../components/chat-panel";
 import { NotificationBell } from "../components/notification-bell";
+import { ClienteOrdersTab } from "../components/cliente-orders-tab";
 
 const getAvatarText = (text: string | null | undefined): string => {
   if (!text || typeof text !== "string") return "??";
@@ -423,65 +429,9 @@ export function ClientePanel() {
             </motion.div>
           )}
 
-          {/* Pedidos */}
+          {/* Pedidos - Enhanced Real-time Tracking */}
           {activeTab === "pedidos" && (
-            <motion.div key="pedidos" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 space-y-4 h-full overflow-y-auto pb-16">
-              <div className="flex justify-between items-center">
-                <h2 className="text-white font-bold text-lg">Meus Pedidos</h2>
-                <button onClick={loadOrders} className="px-3 py-1.5 bg-[#1f1f2e] text-[#00f0ff] rounded-lg text-sm font-medium">
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-              </div>
-              {orders.length === 0 ? (
-                <div className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-8 text-center">
-                  <ShoppingBag className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-400 text-sm mb-1">Nenhum pedido realizado</p>
-                  <p className="text-gray-500 text-xs">Acesse a Loja para fazer pedidos</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {[...orders].reverse().map((order) => (
-                    <div key={order.id} className="bg-[#12121a] border border-[#1f1f2e] rounded-2xl p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
-                          <p className="text-gray-500 text-xs">{new Date(order.createdAt).toLocaleString("pt-BR")}</p>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-full text-xs font-medium"
-                          style={{ backgroundColor: `${statusLabels[order.status]?.color}20`, color: statusLabels[order.status]?.color }}>
-                          {statusLabels[order.status]?.label || order.status}
-                        </span>
-                      </div>
-                      {order.items?.map((item: any, i: number) => (
-                        <div key={i} className="flex justify-between text-sm py-0.5">
-                          <span className="text-gray-300">{item.name} x{item.qty || 1}</span>
-                          <span className="text-white">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
-                        </div>
-                      ))}
-                      <div className="border-t border-[#1f1f2e] mt-2 pt-2 flex justify-between">
-                        <span className="text-white font-bold text-sm">Total</span>
-                        <span className="text-[#00ff41] font-bold text-base">R$ {Number(order.total).toFixed(2)}</span>
-                      </div>
-                      {order.paymentStatus === "paid" && (
-                        <div className="flex items-center gap-1.5 mt-2 px-2.5 py-1 bg-[#00ff41]/10 border border-[#00ff41]/20 rounded-lg w-fit">
-                          <div className="w-2 h-2 rounded-full bg-[#00ff41]" />
-                          <span className="text-[#00ff41] text-xs font-medium">PIX Confirmado</span>
-                        </div>
-                      )}
-                      {!["delivered", "cancelled"].includes(order.status) && (
-                        <div className="mt-3">
-                          <div className="h-1.5 bg-[#1f1f2e] rounded-full overflow-hidden">
-                            <motion.div initial={{ width: 0 }}
-                              animate={{ width: `${{ pending: 20, accepted: 40, preparing: 60, delivering: 80, delivered: 100 }[order.status] || 0}%` }}
-                              className="h-full bg-gradient-to-r from-[#00f0ff] to-[#8b5cf6] rounded-full" />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
+            <ClienteOrdersTab orders={orders} loadOrders={loadOrders} statusLabels={statusLabels} />
           )}
 
           {/* Adicionar Vendedor */}

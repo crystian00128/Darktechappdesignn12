@@ -171,7 +171,7 @@ export function AdminDashboardCharts() {
       {/* Daily Sales Area Chart */}
       <ChartCard title="Vendas - Ultimos 7 Dias" icon={<TrendingUp className="w-4 h-4" />} color="#00f0ff">
         <div className="h-[200px]">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
             <AreaChart data={chartDailySalesWithIdx} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#1f1f2e" />
                <XAxis key="xaxis" dataKey="idx" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} tickFormatter={(v: string) => chartDailySalesWithIdx.find((d: any) => d.idx === v)?.displayLabel || v} />
@@ -202,7 +202,7 @@ export function AdminDashboardCharts() {
         <ChartCard title="Comparativo Vendedores" icon={<BarChart3 className="w-4 h-4" />} color="#8b5cf6">
           {vendorBreakdown.length > 0 ? (
             <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <BarChart data={vendorBreakdown} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
                    <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#1f1f2e" />
                    <XAxis
@@ -237,7 +237,7 @@ export function AdminDashboardCharts() {
         <ChartCard title="Distribuicao de Receita" icon={<Wallet className="w-4 h-4" />} color="#ff00ff">
           {totals.revenue > 0 ? (
             <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <PieChart>
                    <Pie key="pie-comm" data={commissionPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0} isAnimationActive={false}>
                      {commissionPie.map((entry: any, index: number) => (
@@ -370,7 +370,7 @@ export function AdminFaturamentoCharts() {
           </defs>
         </svg>
         <div className="h-[220px]">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
             <AreaChart data={dailySalesWithIdx} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
               <CartesianGrid key="fat-grid" strokeDasharray="3 3" stroke="#1f1f2e" />
               <XAxis key="fat-xaxis" dataKey="idx" tick={{ fill: "#666", fontSize: 10 }} axisLine={{ stroke: "#1f1f2e" }} tickLine={false} tickFormatter={(v: string) => dailySalesWithIdx.find((d: any) => d.idx === v)?.displayLabel || v} />
@@ -391,7 +391,7 @@ export function AdminFaturamentoCharts() {
         <ChartCard title="Receita por Vendedor" icon={<BarChart3 className="w-4 h-4" />} color="#8b5cf6">
           {vendorBreakdown.length > 0 ? (
             <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <BarChart data={vendorBreakdown} margin={{ top: 5, right: 5, left: -15, bottom: 0 }} layout="vertical">
                   <CartesianGrid key="vb-grid" strokeDasharray="3 3" stroke="#1f1f2e" horizontal={false} />
                   <XAxis key="vb-xaxis" type="number" tick={{ fill: "#666", fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
@@ -414,7 +414,7 @@ export function AdminFaturamentoCharts() {
         <ChartCard title="Distribuicao de Receita" icon={<Percent className="w-4 h-4" />} color="#ff00ff">
           {totals.revenue > 0 ? (
             <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <PieChart>
                    <Pie key="pie-comm" data={commissionPie} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={3} dataKey="value" strokeWidth={0} isAnimationActive={false}>
                      {commissionPie.map((entry: any, index: number) => (

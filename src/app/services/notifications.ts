@@ -59,8 +59,10 @@ export function notifyOrderStatus(status: string, orderId: string) {
   const labels: Record<string, string> = {
     accepted: "Pedido aceito",
     preparing: "Pedido em preparo",
-    delivering: "Saiu para entrega",
-    delivered: "Pedido entregue",
+    delivering: "Atribuído para entrega",
+    driver_accepted: "Motorista aceitou a entrega",
+    on_the_way: "Motorista a caminho",
+    delivered: "Entrega concluída",
     cancelled: "Pedido cancelado",
   };
   dispatchNotification({
