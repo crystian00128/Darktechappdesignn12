@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { Phone, PhoneOff, Video, VideoOff, MicOff, Mic, Maximize2 } from "lucide-react";
+import { Phone, PhoneOff, Video, VideoOff, MicOff, Mic, Maximize2, ShieldAlert } from "lucide-react";
 import type { CallData } from "../hooks/useCallSystem";
 
 /* ── Neon Avatar (standalone for call overlays) ── */
@@ -159,6 +159,7 @@ export function ActiveCallOverlay({
   onEnd,
   isMuted = false,
   onToggleMute,
+  micBlocked = false,
 }: {
   call: CallData;
   isConnected: boolean;
@@ -168,6 +169,7 @@ export function ActiveCallOverlay({
   onEnd: () => void;
   isMuted?: boolean;
   onToggleMute?: () => void;
+  micBlocked?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -257,7 +259,7 @@ export function ActiveCallOverlay({
         )}
 
         {/* Mute indicator */}
-        {isMuted && isConnected && (
+        {isMuted && isConnected && !micBlocked && (
           <motion.div
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
@@ -265,6 +267,18 @@ export function ActiveCallOverlay({
           >
             <MicOff className="w-3 h-3 text-[#ff006e]" />
             <span className="text-xs text-[#ff006e] font-medium">Microfone Mudo</span>
+          </motion.div>
+        )}
+
+        {/* Mic blocked indicator */}
+        {micBlocked && isConnected && (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/30"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-[#ff8800]" />
+            <span className="text-xs text-[#ff8800] font-medium">Microfone bloqueado — apenas ouvindo</span>
           </motion.div>
         )}
 

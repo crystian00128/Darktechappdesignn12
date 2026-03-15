@@ -2759,6 +2759,7 @@ export function VendedorPanel() {
             onEnd={callSystem.endCall}
             isMuted={callSystem.isMuted}
             onToggleMute={callSystem.toggleMute}
+            micBlocked={callSystem.micBlocked}
           />
         )}
       </AnimatePresence>

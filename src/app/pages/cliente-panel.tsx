@@ -741,6 +741,7 @@ export function ClientePanel() {
             onEnd={callSystem.endCall}
             isMuted={callSystem.isMuted}
             onToggleMute={callSystem.toggleMute}
+            micBlocked={callSystem.micBlocked}
           />
         )}
       </AnimatePresence>

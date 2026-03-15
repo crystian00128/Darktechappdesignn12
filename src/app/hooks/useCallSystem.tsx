@@ -180,6 +180,7 @@ export function useCallSystem(currentUsername: string) {
   const webrtcSetupDoneRef = useRef(false);
   const otherUserRef = useRef<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [micBlocked, setMicBlocked] = useState(false);
 
   // Lazy-init audio players (safe across HMR)
   const getRingtone = useCallback(() => {
@@ -233,6 +234,7 @@ export function useCallSystem(currentUsername: string) {
     webrtcSetupDoneRef.current = false;
     otherUserRef.current = null;
     iceIndexRef.current = 0;
+    setMicBlocked(false);
   }, []);
 
   const getOrCreateRemoteAudio = useCallback(() => {
@@ -284,17 +286,29 @@ export function useCallSystem(currentUsername: string) {
   }, []);
 
   // Setup WebRTC as CALLER (creates offer)
-  const setupWebRTCCaller = useCallback(async (callId: string, otherUser: string) => {
+  const setupWebRTCCaller = useCallback(async (callId: string, otherUser: string, preAcquiredStream?: MediaStream) => {
     if (webrtcSetupDoneRef.current) return;
     webrtcSetupDoneRef.current = true;
     console.log("[WebRTC] Setting up as CALLER for call:", callId);
     otherUserRef.current = otherUser;
 
     try {
-      // Get microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-      console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+      // Try to get microphone - use pre-acquired stream if available
+      // If mic is denied, continue without local audio (one-way: can still hear other party)
+      let stream: MediaStream | null = preAcquiredStream || null;
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch (micErr: any) {
+          console.warn("[WebRTC] Microphone denied for CALLER, continuing without local audio:", micErr?.message);
+          setMicBlocked(true);
+        }
+      }
+      if (stream) {
+        localStreamRef.current = stream;
+        setMicBlocked(false);
+        console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+      }
 
       // Create peer connection
       const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -302,11 +316,31 @@ export function useCallSystem(currentUsername: string) {
       webrtcRoleRef.current = "caller";
       webrtcCallIdRef.current = callId;
 
-      // Add local audio tracks to connection
-      stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream);
-        console.log("[WebRTC] Added local track:", track.kind, track.enabled);
-      });
+      // Add local audio tracks to connection (if mic available)
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream!);
+          console.log("[WebRTC] Added local track:", track.kind, track.enabled);
+        });
+      } else {
+        // Add a silent audio track so the peer connection has audio in the SDP
+        // This ensures the other party can still send us their audio
+        try {
+          const ctx = new AudioContext();
+          const oscillator = ctx.createOscillator();
+          const dst = ctx.createMediaStreamDestination();
+          oscillator.connect(dst);
+          oscillator.start();
+          const silentTrack = dst.stream.getAudioTracks()[0];
+          silentTrack.enabled = false; // mute the silent track
+          pc.addTrack(silentTrack, dst.stream);
+          console.log("[WebRTC] Added silent placeholder audio track (mic blocked)");
+          // Clean up oscillator after a bit
+          setTimeout(() => { oscillator.stop(); ctx.close().catch(() => {}); }, 100);
+        } catch (e) {
+          console.warn("[WebRTC] Could not create silent track:", e);
+        }
+      }
 
       // Handle remote audio
       pc.ontrack = (event) => {
@@ -328,7 +362,7 @@ export function useCallSystem(currentUsername: string) {
       };
 
       // Create and set offer
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       console.log("[WebRTC] Offer created, sending to server...");
 
@@ -368,17 +402,29 @@ export function useCallSystem(currentUsername: string) {
   }, [getOrCreateRemoteAudio, startICEPolling]);
 
   // Setup WebRTC as CALLEE (receives offer, creates answer)
-  const setupWebRTCCallee = useCallback(async (callId: string, otherUser: string) => {
+  const setupWebRTCCallee = useCallback(async (callId: string, otherUser: string, preAcquiredStream?: MediaStream) => {
     if (webrtcSetupDoneRef.current) return;
     webrtcSetupDoneRef.current = true;
     console.log("[WebRTC] Setting up as CALLEE for call:", callId);
     otherUserRef.current = otherUser;
 
     try {
-      // Get microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-      console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+      // Try to get microphone - use pre-acquired stream if available
+      // If mic is denied, continue without local audio (one-way: can still hear other party)
+      let stream: MediaStream | null = preAcquiredStream || null;
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch (micErr: any) {
+          console.warn("[WebRTC] Microphone denied for CALLEE, continuing without local audio:", micErr?.message);
+          setMicBlocked(true);
+        }
+      }
+      if (stream) {
+        localStreamRef.current = stream;
+        setMicBlocked(false);
+        console.log("[WebRTC] Microphone acquired, tracks:", stream.getAudioTracks().length);
+      }
 
       // Create peer connection
       const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -386,11 +432,29 @@ export function useCallSystem(currentUsername: string) {
       webrtcRoleRef.current = "callee";
       webrtcCallIdRef.current = callId;
 
-      // Add local audio tracks
-      stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream);
-        console.log("[WebRTC] Added local track:", track.kind, track.enabled);
-      });
+      // Add local audio tracks (if mic available)
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream!);
+          console.log("[WebRTC] Added local track:", track.kind, track.enabled);
+        });
+      } else {
+        // Add a silent audio track so the peer connection negotiates audio
+        try {
+          const ctx = new AudioContext();
+          const oscillator = ctx.createOscillator();
+          const dst = ctx.createMediaStreamDestination();
+          oscillator.connect(dst);
+          oscillator.start();
+          const silentTrack = dst.stream.getAudioTracks()[0];
+          silentTrack.enabled = false;
+          pc.addTrack(silentTrack, dst.stream);
+          console.log("[WebRTC] Added silent placeholder audio track (mic blocked)");
+          setTimeout(() => { oscillator.stop(); ctx.close().catch(() => {}); }, 100);
+        } catch (e) {
+          console.warn("[WebRTC] Could not create silent track:", e);
+        }
+      }
 
       // Handle remote audio
       pc.ontrack = (event) => {
@@ -507,8 +571,8 @@ export function useCallSystem(currentUsername: string) {
       if (outgoing && outgoing.status === "connected" && state.outgoingCall) {
         getDialTone().stop();
         playConnectedSound();
-        // Caller: setup WebRTC when callee answers
-        setupWebRTCCaller(outgoing.callId, outgoing.to);
+        // Caller: setup WebRTC when callee answers - use pre-acquired stream from startCall if available
+        setupWebRTCCaller(outgoing.callId, outgoing.to, localStreamRef.current || undefined);
         setCallState(prev => ({
           ...prev,
           outgoingCall: null,
@@ -562,10 +626,27 @@ export function useCallSystem(currentUsername: string) {
   // ── Actions ──────────────────────────────────
   const startCall = useCallback(async (to: string, type: "voice" | "video", fromName: string, fromPhoto?: string) => {
     try {
+      // Pre-acquire microphone in user gesture context to avoid permission errors
+      let preStream: MediaStream | undefined;
+      try {
+        preStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        console.log("[WebRTC] Microphone pre-acquired for CALLER (user gesture)");
+      } catch (micErr) {
+        console.warn("[WebRTC] Could not pre-acquire microphone:", micErr);
+        setMicBlocked(true);
+      }
+      // Store pre-acquired stream so WebRTC setup can use it
+      if (preStream) {
+        localStreamRef.current = preStream;
+      }
       const res = await api.initiateCall(currentUsername, to, type, fromName, fromPhoto);
       if (res.success) {
         getDialTone().play();
         setCallState(prev => ({ ...prev, outgoingCall: res.call }));
+      } else if (preStream) {
+        // If call initiation failed, clean up the stream
+        preStream.getTracks().forEach(t => t.stop());
+        localStreamRef.current = null;
       }
     } catch (err) {
       console.error("Erro ao iniciar chamada:", err);
@@ -577,10 +658,20 @@ export function useCallSystem(currentUsername: string) {
     if (!state.incomingCall) return;
     try {
       getRingtone().stop();
+      // Pre-acquire microphone in user gesture context BEFORE any async calls
+      // This is critical: browsers require getUserMedia to be called directly from a user gesture
+      let preStream: MediaStream | undefined;
+      try {
+        preStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        console.log("[WebRTC] Microphone pre-acquired for CALLEE (user gesture)");
+      } catch (micErr) {
+        console.warn("[WebRTC] Could not pre-acquire microphone:", micErr);
+        setMicBlocked(true);
+      }
       await api.answerCall(currentUsername, state.incomingCall.callId);
       playConnectedSound();
-      // Start WebRTC as callee
-      setupWebRTCCallee(state.incomingCall.callId, state.incomingCall.from);
+      // Start WebRTC as callee, passing the pre-acquired stream
+      setupWebRTCCallee(state.incomingCall.callId, state.incomingCall.from, preStream);
       setCallState(prev => ({
         ...prev,
         incomingCall: null,
@@ -625,6 +716,7 @@ export function useCallSystem(currentUsername: string) {
     endCall,
     toggleMute,
     isMuted,
+    micBlocked,
     localStream: localStreamRef.current,
   };
 }
