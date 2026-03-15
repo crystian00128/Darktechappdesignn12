@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Send,
@@ -115,6 +116,13 @@ export function ChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const prevMessageCountRef = useRef<number>(0);
+
+  // ─── Keep contacts in a ref to avoid re-creating callbacks ───
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
+
+  // ─── Abort controller ref for in-flight requests ────────────
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   // ─── Fetch unread counts ─────────────────────
   const loadUnreadCounts = useCallback(async () => {
@@ -303,9 +311,15 @@ export function ChatPanel({
 
   // ─── Load Messages ────────────────────────────
   const loadMessages = useCallback(async () => {
-    if (!selectedChat) return;
+    if (!selectedChat || !currentUsername) return;
+    // Cancel any in-flight request before starting a new one
+    if (loadAbortRef.current) loadAbortRef.current.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     try {
       const res = await api.getMessages(currentUsername, selectedChat);
+      // If this request was aborted, skip processing
+      if (controller.signal.aborted) return;
       if (res.success) {
         const serverMsgs = (res.messages || []) as Message[];
         const mediaToFetch: Message[] = [];
@@ -323,7 +337,7 @@ export function ChatPanel({
         const incomingNew = serverMsgs.filter(m => m.from !== currentUsername && !m.read);
         if (incomingNew.length > 0 && serverMsgs.length > prevMessageCountRef.current && prevMessageCountRef.current > 0) {
           const lastMsg = incomingNew[incomingNew.length - 1];
-          const senderContact = contacts.find(c => c.username === lastMsg.from);
+          const senderContact = contactsRef.current.find(c => c.username === lastMsg.from);
           const senderName = senderContact?.name || lastMsg.from;
           // Send push notification if app is in background
           if (document.hidden) {
@@ -342,6 +356,7 @@ export function ChatPanel({
         api.markMessagesRead(currentUsername, selectedChat, currentUsername).catch(() => {});
         if (mediaToFetch.length > 0) {
           await Promise.all(mediaToFetch.map((m) => hydrateMediaForMsg(m)));
+          if (controller.signal.aborted) return;
           setMessages((prev) => prev.map((pm) => {
             if (pm.mediaId && blobUrlCacheRef.current.has(pm.mediaId)) {
               const url = blobUrlCacheRef.current.get(pm.mediaId)!;
@@ -352,14 +367,22 @@ export function ChatPanel({
           }));
         }
       }
-    } catch (err) { console.error("Erro ao carregar mensagens:", err); }
-  }, [currentUsername, selectedChat, hydrateMediaForMsg, contacts]);
+    } catch (err: any) {
+      // Suppress abort errors (expected when cancelling in-flight requests)
+      if (err?.name === 'AbortError') return;
+      console.error("Erro ao carregar mensagens:", err);
+    }
+  }, [currentUsername, selectedChat, hydrateMediaForMsg]);
 
   useEffect(() => {
     if (selectedChat) {
       loadMessages();
       pollingRef.current = setInterval(loadMessages, 3000);
-      return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+      return () => {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        // Cancel in-flight request on cleanup
+        if (loadAbortRef.current) { loadAbortRef.current.abort(); loadAbortRef.current = null; }
+      };
     } else { setMessages([]); }
   }, [selectedChat, loadMessages]);
 
@@ -624,6 +647,8 @@ export function ChatPanel({
           )}
         </motion.div>
       ) : (
+        // ── Fullscreen Chat via Portal (bypasses parent overflow-hidden + CSS transform issues) ──
+        createPortal(
         <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
           className="fixed inset-0 z-[70] bg-[#050508] flex flex-col"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
@@ -855,7 +880,9 @@ export function ChatPanel({
               </div>
             </>
           )}
-        </motion.div>
+        </motion.div>,
+        document.body
+        )
       )}
     </div>
   );

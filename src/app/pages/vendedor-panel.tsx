@@ -375,7 +375,10 @@ function VendedorChat({ currentUsername, currentUserName, currentUserPhoto, clie
           });
         }
       }
-    } catch (err) { console.error("Erro ao carregar mensagens:", err); }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      console.error("Erro ao carregar mensagens:", err);
+    }
   }, [currentUsername, selectedChat, hydrateMediaForMsg]);
 
   useEffect(() => {

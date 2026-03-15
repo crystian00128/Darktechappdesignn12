@@ -3,22 +3,35 @@ import { projectId, publicAnonKey } from '/utils/supabase/info';
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-42377006`;
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`,
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-  const data = await response.json();
-  
-  if (!response.ok) {
-    throw new Error(data.error || 'Erro na requisição');
+  // If caller provided a signal, link it to our internal controller
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
 
-  return data;
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${publicAnonKey}`,
+        ...options.headers,
+      },
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Erro na requisição');
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ==================== INICIALIZAÇÃO ====================

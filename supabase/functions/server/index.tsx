@@ -1323,6 +1323,46 @@ app.get("/make-server-42377006/chat/media/:id", async (c) => {
   }
 });
 
+// ─── Chat unread counts (MUST be before /chat/:user1/:user2 to avoid route conflict) ───
+app.get("/make-server-42377006/chat/unread/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    if (!username) return c.json({ success: false, error: "Missing username" }, 400);
+
+    const userData = await kv.get(`user:${username}`);
+    if (!userData) return c.json({ success: false, error: "User not found" }, 404);
+
+    const contactUsernames: string[] = [];
+    if (userData.role === "admin") {
+      const vendedores = await kv.get("users:vendedor") || [];
+      contactUsernames.push(...vendedores);
+    } else if (userData.role === "vendedor") {
+      contactUsernames.push("admin");
+      const createdBy = await kv.get(`created_by:${username}`) || [];
+      for (const u of createdBy) {
+        if (u.username) contactUsernames.push(u.username);
+      }
+    } else if (userData.role === "cliente" || userData.role === "motorista") {
+      if (userData.createdBy) contactUsernames.push(userData.createdBy);
+    }
+
+    const unreadCounts: Record<string, number> = {};
+    for (const contact of contactUsernames) {
+      const chatKey = [username, contact].sort().join(":");
+      const messages = await kv.get(`chat:${chatKey}`) || [];
+      const unread = messages.filter((m: any) => m.from === contact && !m.read).length;
+      if (unread > 0) {
+        unreadCounts[contact] = unread;
+      }
+    }
+
+    return c.json({ success: true, unreadCounts });
+  } catch (error) {
+    console.error("Erro unread counts:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
 app.get("/make-server-42377006/chat/:user1/:user2", async (c) => {
   try {
     const user1 = c.req.param("user1");
@@ -2784,46 +2824,6 @@ app.get("/make-server-42377006/metrics/admin/detailed", async (c) => {
     });
   } catch (error) {
     console.error("❌ Erro nas métricas detalhadas:", error);
-    return c.json({ success: false, error: String(error) }, 500);
-  }
-});
-
-// ==================== CHAT UNREAD COUNTS ====================
-app.get("/make-server-42377006/chat/unread/:username", async (c) => {
-  try {
-    const username = c.req.param("username");
-    if (!username) return c.json({ success: false, error: "Missing username" }, 400);
-
-    const userData = await kv.get(`user:${username}`);
-    if (!userData) return c.json({ success: false, error: "User not found" }, 404);
-
-    const contactUsernames: string[] = [];
-    if (userData.role === "admin") {
-      const vendedores = await kv.get("users:vendedor") || [];
-      contactUsernames.push(...vendedores);
-    } else if (userData.role === "vendedor") {
-      contactUsernames.push("admin");
-      const createdBy = await kv.get(`created_by:${username}`) || [];
-      for (const u of createdBy) {
-        if (u.username) contactUsernames.push(u.username);
-      }
-    } else if (userData.role === "cliente" || userData.role === "motorista") {
-      if (userData.createdBy) contactUsernames.push(userData.createdBy);
-    }
-
-    const unreadCounts: Record<string, number> = {};
-    for (const contact of contactUsernames) {
-      const chatKey = [username, contact].sort().join(":");
-      const messages = await kv.get(`chat:${chatKey}`) || [];
-      const unread = messages.filter((m: any) => m.from === contact && !m.read).length;
-      if (unread > 0) {
-        unreadCounts[contact] = unread;
-      }
-    }
-
-    return c.json({ success: true, unreadCounts });
-  } catch (error) {
-    console.error("Erro unread counts:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });
