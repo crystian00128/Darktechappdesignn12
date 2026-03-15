@@ -1688,13 +1688,17 @@ export function VendedorPanel() {
   const isAdminViewing = currentUser.adminViewing === true;
   const callSystem = useCallSystem(currentUser.username);
 
-  // ─── Heartbeat for presence ───
+  // ─── Heartbeat for presence (respects online toggle) ───
   useEffect(() => {
     if (!currentUser.username) return;
-    api.sendHeartbeat(currentUser.username).catch(() => {});
-    const hb = setInterval(() => api.sendHeartbeat(currentUser.username).catch(() => {}), 15000);
-    return () => clearInterval(hb);
-  }, [currentUser.username]);
+    // Send heartbeat immediately with current online state
+    api.sendHeartbeat(currentUser.username, isOnline).catch(() => {});
+    // Only keep sending heartbeats while online toggle is ON
+    if (isOnline) {
+      const hb = setInterval(() => api.sendHeartbeat(currentUser.username, true).catch(() => {}), 12000);
+      return () => clearInterval(hb);
+    }
+  }, [currentUser.username, isOnline]);
 
   const [totalUnread, setTotalUnread] = useState(0);
 

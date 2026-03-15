@@ -76,6 +76,14 @@ export function ClientePanel() {
   const { vendors, loading, refetch } = useLinkedVendors(currentUser.username);
   const callSystem = useCallSystem(currentUser.username);
 
+  // ─── Heartbeat for presence (client is always online when panel is open) ───
+  useEffect(() => {
+    if (!currentUser.username) return;
+    api.sendHeartbeat(currentUser.username, true).catch(() => {});
+    const hb = setInterval(() => api.sendHeartbeat(currentUser.username, true).catch(() => {}), 12000);
+    return () => clearInterval(hb);
+  }, [currentUser.username]);
+
   const handleStartCall = useCallback(async (to: string, type: "voice" | "video", _toName: string) => {
     await callSystem.startCall(to, type, currentUser.name || currentUser.username, currentUser.photo);
   }, [callSystem.startCall, currentUser.name, currentUser.username, currentUser.photo]);

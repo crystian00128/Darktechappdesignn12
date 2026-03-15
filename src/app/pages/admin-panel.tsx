@@ -516,10 +516,11 @@ export function AdminPanel() {
 
   // ─── Heartbeat for presence ───
   useEffect(() => {
-    api.sendHeartbeat("admin").catch(() => {});
-    const hb = setInterval(() => api.sendHeartbeat("admin").catch(() => {}), 15000);
+    const uname = currentUser.username || "admin";
+    api.sendHeartbeat(uname, true).catch(() => {});
+    const hb = setInterval(() => api.sendHeartbeat(uname, true).catch(() => {}), 12000);
     return () => clearInterval(hb);
-  }, []);
+  }, [currentUser.username]);
 
   const loadHierarchy = useCallback(async () => {
     try {

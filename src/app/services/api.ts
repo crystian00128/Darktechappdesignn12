@@ -497,10 +497,10 @@ export async function getChatUnreadCounts(username: string) {
 }
 
 // ==================== USER PRESENCE ====================
-export async function sendHeartbeat(username: string) {
+export async function sendHeartbeat(username: string, online?: boolean) {
   return fetchAPI('/presence/heartbeat', {
     method: 'POST',
-    body: JSON.stringify({ username }),
+    body: JSON.stringify({ username, online }),
   });
 }
 

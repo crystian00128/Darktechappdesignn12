@@ -1250,7 +1250,7 @@ app.get("/make-server-42377006/users/:username/linked-vendors", async (c) => {
       if (vendor) {
         const { pin, ...vendorWithoutPin } = vendor;
         const presence = await kv.get(`presence:${vu}`);
-        const isOnline = !!(presence && (Date.now() - presence.lastSeen) < 30000);
+        const isOnline = !!(presence && (Date.now() - presence.lastSeen) < 60000 && presence.manualOnline !== false);
         vendors.push({ ...vendorWithoutPin, isOnline });
       }
     }
@@ -1998,12 +1998,15 @@ app.post("/make-server-42377006/status", async (c) => {
     if (!username) {
       return c.json({ success: false, error: "username obrigatório" }, 400);
     }
+    const manualOnline = !!online;
     const statusData = {
       username,
-      online: !!online,
+      online: manualOnline,
       lastSeen: new Date().toISOString(),
     };
     await kv.set(`status:${username}`, statusData);
+    // Also update presence immediately so chat reflects the toggle right away
+    await kv.set(`presence:${username}`, { lastSeen: Date.now(), online: true, manualOnline });
     return c.json({ success: true, status: statusData });
   } catch (error) {
     return c.json({ success: false, error: String(error) }, 500);
@@ -3542,9 +3545,11 @@ app.post("/make-server-42377006/push/reset-vapid", async (c) => {
 // ==================== USER PRESENCE (HEARTBEAT) ====================
 app.post("/make-server-42377006/presence/heartbeat", async (c) => {
   try {
-    const { username } = await c.req.json();
+    const { username, online } = await c.req.json();
     if (!username) return c.json({ success: false, error: "Missing username" }, 400);
-    await kv.set(`presence:${username}`, { lastSeen: Date.now(), online: true });
+    // manualOnline flag: vendor/driver toggle controls this. Client/admin always true.
+    const manualOnline = online !== undefined ? !!online : true;
+    await kv.set(`presence:${username}`, { lastSeen: Date.now(), online: true, manualOnline });
     return c.json({ success: true });
   } catch (error) {
     console.error("Erro heartbeat:", error);
@@ -3556,12 +3561,18 @@ app.post("/make-server-42377006/presence/check", async (c) => {
   try {
     const { usernames } = await c.req.json();
     if (!Array.isArray(usernames)) return c.json({ success: false, error: "Missing usernames array" }, 400);
-    const ONLINE_THRESHOLD = 30000; // 30 seconds
+    const ONLINE_THRESHOLD = 60000; // 60s - generous window to prevent flicker from network delays
     const now = Date.now();
     const presence: Record<string, boolean> = {};
     for (const u of usernames) {
       const data = await kv.get(`presence:${u}`);
-      presence[u] = !!(data && (now - data.lastSeen) < ONLINE_THRESHOLD);
+      if (data) {
+        const isFresh = (now - data.lastSeen) < ONLINE_THRESHOLD;
+        const isManualOnline = data.manualOnline !== false; // true by default for backward compat
+        presence[u] = isFresh && isManualOnline;
+      } else {
+        presence[u] = false;
+      }
     }
     return c.json({ success: true, presence });
   } catch (error) {

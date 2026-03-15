@@ -145,15 +145,8 @@ export function ChatPanel({
   const groupedContactUsernames = groupedContacts?.flatMap(g => g.contacts.map(c => c.username)) || [];
   const allUsernames = [...new Set([...allContactUsernames, ...groupedContactUsernames])];
 
-  useEffect(() => {
-    if (!currentUsername) return;
-    // Send heartbeat immediately then every 15s
-    api.sendHeartbeat(currentUsername).catch(() => {});
-    const hbInterval = setInterval(() => {
-      api.sendHeartbeat(currentUsername).catch(() => {});
-    }, 15000);
-    return () => clearInterval(hbInterval);
-  }, [currentUsername]);
+  // NOTE: Heartbeats are handled by each panel (vendor/driver/client/admin).
+  // Chat panel no longer sends its own heartbeats to avoid overriding the manual online toggle.
 
   useEffect(() => {
     if (allUsernames.length === 0) return;
