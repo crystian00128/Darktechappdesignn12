@@ -1,13 +1,13 @@
 // ══════════════════════════════════════════════════════════════
-// NEON DELIVERY — Service Worker v4 (Samsung-safe PWA)
+// NEON DELIVERY — Service Worker v5 (Samsung-safe PWA)
 // Real HTTPS caching, dynamic PNG icon generation,
 // push notifications, offline support
 // ══════════════════════════════════════════════════════════════
 
-const CACHE_VERSION = 'neon-delivery-v4';
-const STATIC_CACHE = 'neon-static-v4';
-const DYNAMIC_CACHE = 'neon-dynamic-v4';
-const ICON_CACHE = 'neon-icons-v4';
+const CACHE_VERSION = 'neon-delivery-v5';
+const STATIC_CACHE = 'neon-static-v5';
+const DYNAMIC_CACHE = 'neon-dynamic-v5';
+const ICON_CACHE = 'neon-icons-v5';
 const OFFLINE_URL = '/offline.html';
 const MAX_DYNAMIC_CACHE = 100;
 
@@ -333,17 +333,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests — Network first, then cache, then offline page
+  // Navigation requests — SPA fallback: always serve index.html (cached as '/')
+  // This fixes 404 errors when refreshing on /cliente, /vendedor, /admin, /motorista
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const clone = response.clone();
-          caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, clone));
-          return response;
+          // If the server returns a real HTML page (200), cache and return it
+          if (response.status === 200) {
+            const clone = response.clone();
+            caches.open(DYNAMIC_CACHE).then((cache) => cache.put('/', clone));
+            return response;
+          }
+          // Server returned 404 or other error — serve cached index.html (SPA fallback)
+          return caches.match('/').then((cached) => {
+            if (cached) return cached;
+            return caches.match(OFFLINE_URL).then((offline) => {
+              return offline || new Response('Offline', { status: 503 });
+            });
+          });
         })
         .catch(async () => {
-          const cached = await caches.match(request);
+          // Network failure — serve cached index.html
+          const cached = await caches.match('/');
           if (cached) return cached;
           const offlinePage = await caches.match(OFFLINE_URL);
           if (offlinePage) return offlinePage;

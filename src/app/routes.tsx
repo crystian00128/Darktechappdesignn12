@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { LoginPage } from "./pages/login-page";
 import { AdminPanel } from "./pages/admin-panel";
 import { VendedorPanel } from "./pages/vendedor-panel";
@@ -47,5 +47,9 @@ export const router = createBrowserRouter([
         <MotoristaPanel />
       </ProtectedRoute>
     ),
+  },
+  {
+    path: "*",
+    element: <Navigate to="/" replace />,
   },
 ]);

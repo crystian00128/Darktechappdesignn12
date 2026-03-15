@@ -117,7 +117,7 @@ export default function App() {
         if (navigator.serviceWorker.controller) {
           navigator.serviceWorker.controller.postMessage({
             type: 'CACHE_URLS',
-            urls: ['/', '/manifest.json', '/icons/icon.svg'],
+            urls: ['/', '/manifest.json', '/icons/icon.svg', '/cliente', '/vendedor', '/admin', '/motorista'],
           });
         }
       } else {
