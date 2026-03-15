@@ -1,3 +1,4 @@
+// @refresh reset
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as api from "../services/api";
 import { notifyIncomingCall } from "../services/notifications";
@@ -179,6 +180,7 @@ export function useCallSystem(currentUsername: string) {
   const iceIndexRef = useRef<number>(0);
   const webrtcSetupDoneRef = useRef(false);
   const otherUserRef = useRef<string | null>(null);
+  const silentCtxRef = useRef<AudioContext | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
 
@@ -218,6 +220,11 @@ export function useCallSystem(currentUsername: string) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
       localStreamRef.current = null;
     }
+    // Close silent audio context if used (mic-blocked fallback)
+    if (silentCtxRef.current) {
+      silentCtxRef.current.close().catch(() => {});
+      silentCtxRef.current = null;
+    }
     // Stop remote audio
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
@@ -249,6 +256,25 @@ export function useCallSystem(currentUsername: string) {
     return remoteAudioRef.current;
   }, []);
 
+  // Helper: create a silent audio track for mic-blocked fallback
+  // Keeps the AudioContext alive (stored in silentCtxRef) so the track stays valid
+  const createSilentTrack = useCallback((pc: RTCPeerConnection) => {
+    try {
+      const ctx = new AudioContext();
+      silentCtxRef.current = ctx; // Keep alive until cleanup
+      const oscillator = ctx.createOscillator();
+      const dst = ctx.createMediaStreamDestination();
+      oscillator.connect(dst);
+      oscillator.start();
+      const silentTrack = dst.stream.getAudioTracks()[0];
+      silentTrack.enabled = false; // mute the silent track
+      pc.addTrack(silentTrack, dst.stream);
+      console.log("[WebRTC] Added silent placeholder audio track (mic blocked)");
+    } catch (e) {
+      console.warn("[WebRTC] Could not create silent track:", e);
+    }
+  }, []);
+
   // Start polling for ICE candidates from the other party
   const startICEPolling = useCallback((callId: string, otherUser: string) => {
     if (icePollRef.current) clearInterval(icePollRef.current);
@@ -257,8 +283,8 @@ export function useCallSystem(currentUsername: string) {
     const pollICE = async () => {
       try {
         const pc = pcRef.current;
-        if (!pc || pc.connectionState === "closed") {
-          if (icePollRef.current) clearInterval(icePollRef.current);
+        if (!pc || pc.signalingState === "closed" || pc.connectionState === "closed") {
+          if (icePollRef.current) { clearInterval(icePollRef.current); icePollRef.current = null; }
           return;
         }
         const res = await api.getICECandidates(callId, otherUser);
@@ -266,11 +292,22 @@ export function useCallSystem(currentUsername: string) {
         const candidates = res.candidates;
         // Only process new candidates
         for (let i = iceIndexRef.current; i < candidates.length; i++) {
+          // Re-check PC is still open before each addIceCandidate
+          const currentPc = pcRef.current;
+          if (!currentPc || currentPc.signalingState === "closed" || currentPc.connectionState === "closed") {
+            if (icePollRef.current) { clearInterval(icePollRef.current); icePollRef.current = null; }
+            return;
+          }
           try {
             const parsed = JSON.parse(candidates[i].candidate);
-            await pc.addIceCandidate(new RTCIceCandidate(parsed));
+            await currentPc.addIceCandidate(new RTCIceCandidate(parsed));
             console.log(`[WebRTC] Added ICE candidate #${i} from ${otherUser}`);
-          } catch (e) {
+          } catch (e: any) {
+            // Silence InvalidStateError on closed connections (race during cleanup)
+            if (e?.name === "InvalidStateError") {
+              if (icePollRef.current) { clearInterval(icePollRef.current); icePollRef.current = null; }
+              return;
+            }
             console.warn("[WebRTC] Failed to add ICE candidate:", e);
           }
         }
@@ -325,21 +362,7 @@ export function useCallSystem(currentUsername: string) {
       } else {
         // Add a silent audio track so the peer connection has audio in the SDP
         // This ensures the other party can still send us their audio
-        try {
-          const ctx = new AudioContext();
-          const oscillator = ctx.createOscillator();
-          const dst = ctx.createMediaStreamDestination();
-          oscillator.connect(dst);
-          oscillator.start();
-          const silentTrack = dst.stream.getAudioTracks()[0];
-          silentTrack.enabled = false; // mute the silent track
-          pc.addTrack(silentTrack, dst.stream);
-          console.log("[WebRTC] Added silent placeholder audio track (mic blocked)");
-          // Clean up oscillator after a bit
-          setTimeout(() => { oscillator.stop(); ctx.close().catch(() => {}); }, 100);
-        } catch (e) {
-          console.warn("[WebRTC] Could not create silent track:", e);
-        }
+        createSilentTrack(pc);
       }
 
       // Handle remote audio
@@ -399,7 +422,7 @@ export function useCallSystem(currentUsername: string) {
       console.error("[WebRTC] CALLER setup failed:", err);
       webrtcSetupDoneRef.current = false;
     }
-  }, [getOrCreateRemoteAudio, startICEPolling]);
+  }, [getOrCreateRemoteAudio, startICEPolling, createSilentTrack]);
 
   // Setup WebRTC as CALLEE (receives offer, creates answer)
   const setupWebRTCCallee = useCallback(async (callId: string, otherUser: string, preAcquiredStream?: MediaStream) => {
@@ -440,20 +463,7 @@ export function useCallSystem(currentUsername: string) {
         });
       } else {
         // Add a silent audio track so the peer connection negotiates audio
-        try {
-          const ctx = new AudioContext();
-          const oscillator = ctx.createOscillator();
-          const dst = ctx.createMediaStreamDestination();
-          oscillator.connect(dst);
-          oscillator.start();
-          const silentTrack = dst.stream.getAudioTracks()[0];
-          silentTrack.enabled = false;
-          pc.addTrack(silentTrack, dst.stream);
-          console.log("[WebRTC] Added silent placeholder audio track (mic blocked)");
-          setTimeout(() => { oscillator.stop(); ctx.close().catch(() => {}); }, 100);
-        } catch (e) {
-          console.warn("[WebRTC] Could not create silent track:", e);
-        }
+        createSilentTrack(pc);
       }
 
       // Handle remote audio
@@ -478,6 +488,8 @@ export function useCallSystem(currentUsername: string) {
       // Poll for offer from caller
       const pollForOffer = async (): Promise<RTCSessionDescriptionInit | null> => {
         for (let attempt = 0; attempt < 30; attempt++) {
+          // Bail out if PC was closed during polling (call ended)
+          if (!pcRef.current || pcRef.current.signalingState === "closed") return null;
           try {
             const res = await api.getSDP(callId, "offer");
             if (res.success && res.data && res.data.sdp) {
@@ -490,8 +502,8 @@ export function useCallSystem(currentUsername: string) {
       };
 
       const offer = await pollForOffer();
-      if (!offer) {
-        console.error("[WebRTC] No offer received after 30s");
+      if (!offer || !pcRef.current || pcRef.current.signalingState === "closed") {
+        if (!offer) console.error("[WebRTC] No offer received after 30s");
         webrtcSetupDoneRef.current = false;
         return;
       }
@@ -515,7 +527,7 @@ export function useCallSystem(currentUsername: string) {
       console.error("[WebRTC] CALLEE setup failed:", err);
       webrtcSetupDoneRef.current = false;
     }
-  }, [getOrCreateRemoteAudio, startICEPolling]);
+  }, [getOrCreateRemoteAudio, startICEPolling, createSilentTrack]);
 
   // ─── Mute/unmute ──────────────────────────────────
   const toggleMute = useCallback(() => {
