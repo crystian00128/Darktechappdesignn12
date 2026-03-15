@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { SidebarLayout } from "../components/sidebar-layout";
 import { StatCard } from "../components/stat-card";
@@ -30,6 +30,13 @@ import {
   Plus,
   Loader2,
   Smartphone,
+  Banknote,
+  ArrowDownToLine,
+  BadgeCheck,
+  Calendar,
+  Filter,
+  Wallet,
+  X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import * as api from "../services/api";
@@ -118,6 +125,358 @@ function NeonAvatar({ photo, name, size = "md" }: { photo?: string; name?: strin
         transition={{ duration: 1.5, repeat: Infinity }}
       />
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADMIN WITHDRAWAL REQUESTS COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function AdminWithdrawalRequests() {
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [completing, setCompleting] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "completed">("all");
+  const [dateFilterStart, setDateFilterStart] = useState(() => {
+    const d = new Date(); d.setHours(0,0,0,0);
+    return d.toISOString().split("T")[0];
+  });
+  const [dateFilterEnd, setDateFilterEnd] = useState(() => new Date().toISOString().split("T")[0]);
+  const [datePreset, setDatePreset] = useState("hoje");
+
+  const applyPreset = (preset: string) => {
+    setDatePreset(preset);
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    if (preset === "hoje") {
+      setDateFilterStart(today);
+      setDateFilterEnd(today);
+    } else if (preset === "7dias") {
+      const d = new Date(now); d.setDate(d.getDate() - 6);
+      setDateFilterStart(d.toISOString().split("T")[0]);
+      setDateFilterEnd(today);
+    } else if (preset === "30dias") {
+      const d = new Date(now); d.setDate(d.getDate() - 29);
+      setDateFilterStart(d.toISOString().split("T")[0]);
+      setDateFilterEnd(today);
+    } else if (preset === "mes") {
+      const d = new Date(now.getFullYear(), now.getMonth(), 1);
+      setDateFilterStart(d.toISOString().split("T")[0]);
+      setDateFilterEnd(today);
+    } else if (preset === "tudo") {
+      setDateFilterStart("2020-01-01");
+      setDateFilterEnd(today);
+    }
+  };
+
+  const loadRequests = useCallback(async () => {
+    try {
+      const res = await api.getAdminWithdrawalRequests();
+      if (res.success) setRequests(res.requests || []);
+    } catch (err) {
+      console.error("Erro ao carregar solicitações de saque:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadRequests(); }, [loadRequests]);
+  useEffect(() => {
+    const iv = setInterval(loadRequests, 10000);
+    return () => clearInterval(iv);
+  }, [loadRequests]);
+
+  const handleComplete = async (withdrawalId: string) => {
+    setCompleting(withdrawalId);
+    try {
+      const res = await api.completeWithdrawal(withdrawalId);
+      if (res.success) {
+        sfx.playSuccess();
+        await loadRequests();
+      } else {
+        sfx.playError();
+      }
+    } catch (err) {
+      console.error("Erro ao completar saque:", err);
+      sfx.playError();
+    } finally {
+      setCompleting(null);
+    }
+  };
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      const d = (r.requestedAt || "").split("T")[0];
+      return d >= dateFilterStart && d <= dateFilterEnd;
+    });
+  }, [requests, statusFilter, dateFilterStart, dateFilterEnd]);
+
+  const pendingCount = requests.filter(r => r.status === "pending").length;
+  const completedCount = requests.filter(r => r.status === "completed").length;
+  const pendingTotal = requests.filter(r => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+
+  const fmtDate = (dateStr: string) => {
+    if (!dateStr) return "-";
+    return new Date(dateStr).toLocaleDateString("pt-BR", {
+      day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  const getDeadlineStatus = (deadline: string) => {
+    if (!deadline) return { label: "-", color: "#666", urgent: false };
+    const now = new Date().getTime();
+    const dl = new Date(deadline).getTime();
+    const hoursLeft = (dl - now) / (1000 * 60 * 60);
+    if (hoursLeft <= 0) return { label: "Expirado", color: "#ff006e", urgent: true };
+    if (hoursLeft <= 6) return { label: `${Math.ceil(hoursLeft)}h restantes`, color: "#ff9f00", urgent: true };
+    if (hoursLeft <= 12) return { label: `${Math.ceil(hoursLeft)}h restantes`, color: "#ff9f00", urgent: false };
+    return { label: `${Math.ceil(hoursLeft)}h restantes`, color: "#00ff41", urgent: false };
+  };
+
+  if (loading) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center justify-center py-20">
+        <motion.div className="w-8 h-8 border-2 border-[#00f0ff] border-t-transparent rounded-full" animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }} />
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-bold text-xl flex items-center gap-2">
+          <Banknote className="w-5 h-5 text-[#00f0ff]" />
+          <NeonText>Solicitações de Saque</NeonText>
+        </h2>
+        <motion.button
+          onClick={loadRequests}
+          whileTap={{ scale: 0.95, rotate: 180 }}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#00f0ff]/10 text-[#00f0ff] rounded-lg hover:bg-[#00f0ff]/15 transition-colors text-xs font-medium border border-[#00f0ff]/20"
+        >
+          <RefreshCw className="w-3.5 h-3.5" /> Atualizar
+        </motion.button>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <GlowCard glowColor="#ff9f00">
+          <div className="p-3 text-center">
+            <NeonText color="#ff9f00" className="text-2xl font-black block">{pendingCount}</NeonText>
+            <p className="text-gray-500 text-[11px] mt-0.5">Pendentes</p>
+          </div>
+        </GlowCard>
+        <GlowCard glowColor="#00ff41">
+          <div className="p-3 text-center">
+            <NeonText color="#00ff41" className="text-2xl font-black block">{completedCount}</NeonText>
+            <p className="text-gray-500 text-[11px] mt-0.5">Concluídos</p>
+          </div>
+        </GlowCard>
+        <GlowCard glowColor="#ff006e">
+          <div className="p-3 text-center">
+            <NeonText color="#ff006e" className="text-lg font-black block">R$ {pendingTotal.toFixed(2)}</NeonText>
+            <p className="text-gray-500 text-[11px] mt-0.5">Total Pendente</p>
+          </div>
+        </GlowCard>
+      </div>
+
+      {/* Date Filter */}
+      <GlowCard glowColor="#8b5cf6">
+        <div className="p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Calendar className="w-3.5 h-3.5 text-[#8b5cf6]" />
+            <span className="text-white text-xs font-semibold">Filtro por Data</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {[
+              { id: "hoje", label: "Hoje" },
+              { id: "7dias", label: "7 dias" },
+              { id: "30dias", label: "30 dias" },
+              { id: "mes", label: "Este mês" },
+              { id: "tudo", label: "Tudo" },
+            ].map((p) => (
+              <motion.button
+                key={p.id}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => applyPreset(p.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+                  datePreset === p.id
+                    ? "bg-[#8b5cf6]/20 text-[#8b5cf6] border border-[#8b5cf6]/40"
+                    : "bg-[#1f1f2e]/50 text-gray-500 border border-[#1f1f2e] hover:text-gray-300"
+                }`}
+              >
+                {p.label}
+              </motion.button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={dateFilterStart}
+              onChange={(e) => { setDateFilterStart(e.target.value); setDatePreset("custom"); }}
+              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50"
+            />
+            <span className="text-gray-600 text-xs">até</span>
+            <input
+              type="date"
+              value={dateFilterEnd}
+              onChange={(e) => { setDateFilterEnd(e.target.value); setDatePreset("custom"); }}
+              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50"
+            />
+          </div>
+        </div>
+      </GlowCard>
+
+      {/* Status Filter */}
+      <div className="flex gap-2">
+        {[
+          { id: "all" as const, label: "Todos", color: "#00f0ff" },
+          { id: "pending" as const, label: "Pendentes", color: "#ff9f00" },
+          { id: "completed" as const, label: "Concluídos", color: "#00ff41" },
+        ].map((f) => (
+          <motion.button
+            key={f.id}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setStatusFilter(f.id)}
+            className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${
+              statusFilter === f.id
+                ? ""
+                : "border-[#1f1f2e] text-gray-500 hover:text-gray-300"
+            }`}
+            style={statusFilter === f.id ? {
+              background: `linear-gradient(135deg, ${f.color}15, ${f.color}05)`,
+              borderColor: `${f.color}40`,
+              color: f.color,
+            } : {}}
+          >
+            {f.label}
+          </motion.button>
+        ))}
+      </div>
+
+      {/* Requests List */}
+      {filteredRequests.length === 0 ? (
+        <GlowCard>
+          <div className="py-10 text-center">
+            <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
+              <Wallet className="w-10 h-10 text-gray-700 mx-auto mb-2" />
+            </motion.div>
+            <p className="text-gray-600 text-xs">Nenhuma solicitação de saque encontrada</p>
+            <p className="text-gray-700 text-[10px] mt-1">Ajuste os filtros ou aguarde novas solicitações</p>
+          </div>
+        </GlowCard>
+      ) : (
+        <div className="space-y-3">
+          {filteredRequests.map((req, idx) => {
+            const isPending = req.status === "pending";
+            const isCompleted = req.status === "completed";
+            const deadline = isPending ? getDeadlineStatus(req.deadline) : null;
+            const isCompleting = completing === req.id;
+
+            return (
+              <motion.div
+                key={req.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.04 }}
+              >
+                <GlowCard glowColor={isPending ? "#ff9f00" : "#00ff41"}>
+                  <div className="p-4 space-y-3">
+                    {/* Header Row */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <NeonAvatar name={req.vendorName || req.vendorUsername} size="sm" />
+                        <div>
+                          <h3 className="text-white font-semibold text-sm">{req.vendorName || "Vendedor"}</h3>
+                          <p className="text-gray-500 text-[11px]">@{req.vendorUsername}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <NeonText
+                          color={isPending ? "#ff9f00" : "#00ff41"}
+                          className="text-xl font-black block"
+                        >
+                          R$ {(req.amount || 0).toFixed(2)}
+                        </NeonText>
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5"
+                          style={{
+                            background: isPending ? "rgba(255,159,0,0.12)" : "rgba(0,255,65,0.12)",
+                            color: isPending ? "#ff9f00" : "#00ff41",
+                          }}
+                        >
+                          {isPending ? (
+                            <><Clock className="w-2.5 h-2.5" /> Pendente</>
+                          ) : (
+                            <><BadgeCheck className="w-2.5 h-2.5" /> Concluído</>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Details */}
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                        <span className="text-gray-600 block">PIX Destino</span>
+                        <span className="text-white font-mono text-[10px] break-all">{req.pixAddress || "Não informado"}</span>
+                      </div>
+                      <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                        <span className="text-gray-600 block">Solicitado em</span>
+                        <span className="text-white">{fmtDate(req.requestedAt)}</span>
+                      </div>
+                      {isPending && deadline && (
+                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                          <span className="text-gray-600 block">Prazo</span>
+                          <motion.span
+                            className="font-semibold"
+                            style={{ color: deadline.color }}
+                            animate={deadline.urgent ? { opacity: [1, 0.5, 1] } : {}}
+                            transition={deadline.urgent ? { duration: 1, repeat: Infinity } : {}}
+                          >
+                            {deadline.label}
+                          </motion.span>
+                        </div>
+                      )}
+                      {isCompleted && req.completedAt && (
+                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                          <span className="text-gray-600 block">Concluído em</span>
+                          <span className="text-[#00ff41]">{fmtDate(req.completedAt)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Button */}
+                    {isPending && (
+                      <motion.button
+                        whileHover={{ scale: 1.02, boxShadow: "0 0 25px rgba(0,255,65,0.3)" }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => handleComplete(req.id)}
+                        disabled={isCompleting}
+                        className="w-full py-3 font-bold text-black text-sm rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                        style={{ background: "linear-gradient(135deg, #00ff41 0%, #00f0ff 100%)" }}
+                      >
+                        {isCompleting ? (
+                          <motion.div
+                            className="w-4 h-4 border-2 border-black border-t-transparent rounded-full"
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                          />
+                        ) : (
+                          <>
+                            <BadgeCheck className="w-4 h-4" />
+                            Transferência Realizada com Sucesso
+                          </>
+                        )}
+                      </motion.button>
+                    )}
+                  </div>
+                </GlowCard>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -213,6 +572,7 @@ export function AdminPanel() {
     { icon: <Shield className="w-5 h-5" />, label: "Seguranca", id: "seguranca" },
     { icon: <Key className="w-5 h-5" />, label: "API", id: "api" },
     { icon: <TrendingUp className="w-5 h-5" />, label: "Faturamento", id: "faturamento" },
+    { icon: <Banknote className="w-5 h-5" />, label: "Saques", id: "saques" },
     { icon: <Smartphone className="w-5 h-5" />, label: "PWA", id: "pwa" },
   ];
 
@@ -951,6 +1311,11 @@ export function AdminPanel() {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <AdminFaturamentoCharts />
         </motion.div>
+      )}
+
+      {/* ===================== SOLICITAÇÕES DE SAQUE ===================== */}
+      {activeTab === "saques" && (
+        <AdminWithdrawalRequests />
       )}
 
       {/* ===================== PWA DIAGNOSTICS ===================== */}

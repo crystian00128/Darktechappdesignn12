@@ -3648,4 +3648,217 @@ app.post("/make-server-42377006/chat/notify", async (c) => {
   }
 });
 
+// ==================== VENDOR WALLET ====================
+
+// Save PIX address for vendor
+app.post("/make-server-42377006/vendor-wallet/pix-address", async (c) => {
+  try {
+    const { username, pixAddress } = await c.req.json();
+    if (!username) return c.json({ success: false, error: "username obrigatório" }, 400);
+    await kv.set(`vendor:pix_address:${username}`, { address: pixAddress || "", updatedAt: new Date().toISOString() });
+    console.log(`✅ PIX address saved for ${username}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Erro ao salvar endereço PIX:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get PIX address for vendor
+app.get("/make-server-42377006/vendor-wallet/pix-address/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const data = await kv.get(`vendor:pix_address:${username}`);
+    return c.json({ success: true, pixAddress: data?.address || "" });
+  } catch (error) {
+    console.error("Erro ao buscar endereço PIX:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get vendor wallet balance
+app.get("/make-server-42377006/vendor-wallet/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const user = await kv.get(`user:${username}`);
+    if (!user || user.role !== "vendedor") return c.json({ success: false, error: "Vendedor não encontrado" }, 404);
+
+    const orders = await kv.get(`orders:vendor:${username}`) || [];
+    const directPixSales = await kv.get(`pix_direct_sales:${username}`) || [];
+    const commissionRate = user.adminCommissionRate !== undefined ? user.adminCommissionRate : 15;
+    const commissionDecimal = commissionRate / 100;
+
+    // Calculate client sales profit (faturamento)
+    let clientSalesProfit = 0;
+    for (const order of orders) {
+      if (order.status === "cancelled" || order.paymentStatus !== "paid") continue;
+      if (order.feeBreakdown?.vendorProfit !== undefined) {
+        clientSalesProfit += order.feeBreakdown.vendorProfit;
+      } else {
+        const total = order.total || 0;
+        const adminTax = total * commissionDecimal + 0.99;
+        let driverTax = 0;
+        if (order.driverUsername) {
+          const driverCfg = await kv.get(`driver_commission:${username}:${order.driverUsername}`);
+          const taxaFixa = driverCfg?.taxaFixa ?? 5;
+          const taxaPercent = driverCfg?.taxaPercent ?? 8;
+          driverTax = taxaFixa + (taxaPercent / 100) * total;
+        }
+        clientSalesProfit += total - adminTax - driverTax;
+      }
+    }
+
+    // Calculate internal PIX profit
+    let internalPixProfit = 0;
+    for (const sale of directPixSales) {
+      const amount = sale.amount || 0;
+      const adminTax = amount * commissionDecimal + 0.99;
+      internalPixProfit += amount - adminTax;
+    }
+
+    const totalBalance = parseFloat((clientSalesProfit + internalPixProfit).toFixed(2));
+
+    // Get withdrawn amount
+    const withdrawals = await kv.get(`vendor:withdrawals:${username}`) || [];
+    let totalWithdrawn = 0;
+    for (const w of withdrawals) {
+      if (w.status === "completed" || w.status === "pending") {
+        totalWithdrawn += w.amount || 0;
+      }
+    }
+
+    const availableBalance = parseFloat((totalBalance - totalWithdrawn).toFixed(2));
+
+    return c.json({
+      success: true,
+      wallet: {
+        clientSalesProfit: parseFloat(clientSalesProfit.toFixed(2)),
+        internalPixProfit: parseFloat(internalPixProfit.toFixed(2)),
+        totalBalance,
+        totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
+        availableBalance: Math.max(0, availableBalance),
+        withdrawals,
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao buscar carteira do vendedor:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Request withdrawal
+app.post("/make-server-42377006/vendor-wallet/withdraw", async (c) => {
+  try {
+    const { username, amount } = await c.req.json();
+    if (!username || !amount || amount <= 0) {
+      return c.json({ success: false, error: "username e amount positivo obrigatórios" }, 400);
+    }
+
+    const user = await kv.get(`user:${username}`);
+    if (!user || user.role !== "vendedor") return c.json({ success: false, error: "Vendedor não encontrado" }, 404);
+
+    const pixAddrData = await kv.get(`vendor:pix_address:${username}`);
+    const pixAddress = pixAddrData?.address || "";
+
+    const withdrawal = {
+      id: `wd-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      vendorUsername: username,
+      vendorName: user.name || username,
+      amount: parseFloat(amount.toFixed(2)),
+      pixAddress,
+      status: "pending",
+      requestedAt: new Date().toISOString(),
+      completedAt: null,
+      deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    };
+
+    const vendorWithdrawals = await kv.get(`vendor:withdrawals:${username}`) || [];
+    vendorWithdrawals.push(withdrawal);
+    await kv.set(`vendor:withdrawals:${username}`, vendorWithdrawals);
+
+    const adminRequests = await kv.get("admin:withdrawal_requests") || [];
+    adminRequests.push(withdrawal);
+    await kv.set("admin:withdrawal_requests", adminRequests);
+
+    // Send push notification to admin
+    const allUsers = await kv.getByPrefix("user:");
+    for (const u of allUsers) {
+      if (u?.value?.role === "admin") {
+        await sendPushToUser(u.value.username, {
+          title: "💰 Nova Solicitação de Saque",
+          body: `${user.name || username} solicitou saque de R$ ${amount.toFixed(2)}`,
+          tag: `withdrawal-${withdrawal.id}`,
+          data: { url: "/admin", type: "withdrawal_request" },
+        });
+      }
+    }
+
+    console.log(`✅ Withdrawal request created: R$${amount.toFixed(2)} by ${username}`);
+    return c.json({ success: true, withdrawal });
+  } catch (error) {
+    console.error("Erro ao solicitar saque:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get vendor withdrawals
+app.get("/make-server-42377006/vendor-wallet/withdrawals/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const withdrawals = await kv.get(`vendor:withdrawals:${username}`) || [];
+    return c.json({ success: true, withdrawals });
+  } catch (error) {
+    console.error("Erro ao buscar saques:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Admin: Get all withdrawal requests
+app.get("/make-server-42377006/admin/withdrawal-requests", async (c) => {
+  try {
+    const requests = await kv.get("admin:withdrawal_requests") || [];
+    requests.sort((a: any, b: any) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+    return c.json({ success: true, requests });
+  } catch (error) {
+    console.error("Erro ao buscar solicitações de saque:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Admin: Complete withdrawal
+app.post("/make-server-42377006/admin/withdrawal-complete", async (c) => {
+  try {
+    const { withdrawalId } = await c.req.json();
+    if (!withdrawalId) return c.json({ success: false, error: "withdrawalId obrigatório" }, 400);
+
+    const adminRequests = await kv.get("admin:withdrawal_requests") || [];
+    const reqIndex = adminRequests.findIndex((r: any) => r.id === withdrawalId);
+    if (reqIndex === -1) return c.json({ success: false, error: "Solicitação não encontrada" }, 404);
+
+    const request = adminRequests[reqIndex];
+    adminRequests[reqIndex] = { ...request, status: "completed", completedAt: new Date().toISOString() };
+    await kv.set("admin:withdrawal_requests", adminRequests);
+
+    const vendorWithdrawals = await kv.get(`vendor:withdrawals:${request.vendorUsername}`) || [];
+    const vIdx = vendorWithdrawals.findIndex((w: any) => w.id === withdrawalId);
+    if (vIdx !== -1) {
+      vendorWithdrawals[vIdx] = { ...vendorWithdrawals[vIdx], status: "completed", completedAt: new Date().toISOString() };
+      await kv.set(`vendor:withdrawals:${request.vendorUsername}`, vendorWithdrawals);
+    }
+
+    await sendPushToUser(request.vendorUsername, {
+      title: "✅ Saque Concluído!",
+      body: `Sua solicitação de saque de R$ ${request.amount.toFixed(2)} foi concluída com sucesso!`,
+      tag: `withdrawal-complete-${withdrawalId}`,
+      data: { url: "/vendedor", type: "withdrawal_completed" },
+    });
+
+    console.log(`✅ Withdrawal ${withdrawalId} completed for ${request.vendorUsername}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Erro ao completar saque:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
 Deno.serve(app.fetch);

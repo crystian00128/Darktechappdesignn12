@@ -16,7 +16,7 @@ import {
   ClipboardList, Trash2, Clock, CheckCircle2, UserPlus, RefreshCw, ArrowLeft,
   Shield, Zap, Send, ChevronLeft, CheckCheck, Mic, Phone, Video, Camera, Image as ImageIcon,
   Paperclip, Play, Pause, Square, MicOff, PhoneOff, VideoOff, Maximize2, QrCode, Loader2,
-  Navigation, Calendar, Filter, Eye,
+  Navigation, Calendar, Filter, Eye, Banknote, ArrowDownToLine, AlertCircle, BadgeCheck,
 } from "lucide-react";
 
 // ─── Shared Neon Components ─────────────────────────────────────────
@@ -1205,6 +1205,394 @@ function MotoristaCommissionTab({ vendorUsername, motoristas }: { vendorUsername
   );
 }
 
+// ─── Recebimentos Component ──────────────────────────────────────────
+function VendedorRecebimentos({ currentUsername }: { currentUsername: string }) {
+  const [pixAddress, setPixAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.getPixAddress(currentUsername);
+        if (res.success) setPixAddress(res.pixAddress || "");
+      } catch (e) { console.error("Erro ao carregar endereço PIX:", e); }
+      finally { setLoading(false); }
+    })();
+  }, [currentUsername]);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const res = await api.savePixAddress(currentUsername, pixAddress);
+      if (res.success) {
+        sfx.playCodeAccepted();
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+      } else {
+        sfx.playError();
+      }
+    } catch (e) {
+      console.error("Erro ao salvar:", e);
+      sfx.playError();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <GlowCard>
+        <div className="p-5">
+          <h2 className="text-white font-bold text-lg mb-1"><NeonText>Recebimentos DEPIX</NeonText></h2>
+          <p className="text-gray-500 text-xs mb-4">Endereco da sua carteira para receber saques</p>
+          {loading ? (
+            <div className="flex items-center justify-center py-6">
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                className="w-6 h-6 border-2 border-[#00f0ff]/30 border-t-[#00f0ff] rounded-full" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Carteira DEPIX</label>
+                <input type="text" placeholder="0x..." value={pixAddress}
+                  onChange={(e) => setPixAddress(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-[#0a0a12] border border-[#1f1f2e] rounded-xl text-white text-sm focus:outline-none focus:border-[#00f0ff]/50 transition-all placeholder-gray-600" />
+              </div>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={saving}
+                className="w-full py-3 font-bold text-white text-sm rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: saved ? "linear-gradient(135deg, #00ff41 0%, #00f0ff 100%)" : "linear-gradient(135deg, #00f0ff 0%, #8b5cf6 100%)" }}
+              >
+                {saving ? (
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+                ) : saved ? (
+                  <><Check className="w-4 h-4" /> Salvo com sucesso!</>
+                ) : (
+                  "Salvar"
+                )}
+              </motion.button>
+            </div>
+          )}
+        </div>
+      </GlowCard>
+    </motion.div>
+  );
+}
+
+// ─── Carteira Component ──────────────────────────────────────────────
+function VendedorCarteira({ currentUsername }: { currentUsername: string }) {
+  const [wallet, setWallet] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [toast, setToast] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+  const [dateFilterStart, setDateFilterStart] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().split("T")[0];
+  });
+  const [dateFilterEnd, setDateFilterEnd] = useState(() => new Date().toISOString().split("T")[0]);
+
+  const showToast = (text: string, type: "success" | "error" | "info" = "info") => {
+    setToast({ text, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const loadWallet = async () => {
+    try {
+      const res = await api.getVendorWallet(currentUsername);
+      if (res.success) setWallet(res.wallet);
+    } catch (e) { console.error("Erro ao carregar carteira:", e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadWallet(); }, [currentUsername]);
+  useEffect(() => { const i = setInterval(loadWallet, 15000); return () => clearInterval(i); }, [currentUsername]);
+
+  const handleWithdraw = async () => {
+    const amount = parseFloat(withdrawAmount.replace(",", "."));
+    if (!amount || amount <= 0) {
+      showToast("Informe um valor válido", "error");
+      sfx.playError();
+      return;
+    }
+    if (amount > (wallet?.availableBalance || 0)) {
+      showToast("Saldo insuficiente para este saque", "error");
+      sfx.playError();
+      return;
+    }
+    setWithdrawing(true);
+    try {
+      const res = await api.requestWithdrawal(currentUsername, amount);
+      if (res.success) {
+        sfx.playSuccess();
+        showToast(`Solicitação de saque de R$ ${amount.toFixed(2)} enviada! Aguarde até 24h para transferência.`, "success");
+        setWithdrawAmount("");
+        await loadWallet();
+      } else {
+        sfx.playError();
+        showToast(res.error || "Erro ao solicitar saque", "error");
+      }
+    } catch (e: any) {
+      sfx.playError();
+      showToast(e.message || "Erro ao solicitar saque", "error");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const filteredWithdrawals = useMemo(() => {
+    if (!wallet?.withdrawals) return [];
+    return wallet.withdrawals.filter((w: any) => {
+      const d = (w.requestedAt || "").split("T")[0];
+      return d >= dateFilterStart && d <= dateFilterEnd;
+    }).sort((a: any, b: any) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+  }, [wallet?.withdrawals, dateFilterStart, dateFilterEnd]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="w-8 h-8 border-2 border-[#00ff41]/30 border-t-[#00ff41] rounded-full" />
+      </div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+      {/* Toast */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[90] px-4 py-2.5 rounded-xl text-white text-sm font-medium border backdrop-blur-xl shadow-[0_0_30px_rgba(0,0,0,0.5)] max-w-[90vw]"
+            style={{
+              background: toast.type === "success" ? "linear-gradient(135deg, rgba(0,255,65,0.15), rgba(0,240,255,0.1))" : toast.type === "error" ? "linear-gradient(135deg, rgba(255,0,60,0.15), rgba(255,0,110,0.1))" : "linear-gradient(135deg, #1f1f2e, #12121a)",
+              borderColor: toast.type === "success" ? "rgba(0,255,65,0.3)" : toast.type === "error" ? "rgba(255,0,60,0.3)" : "#1f1f2e",
+            }}
+          >
+            {toast.text}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Balance Card */}
+      <GlowCard glowColor="#00ff41">
+        <div className="p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <motion.div className="w-12 h-12 rounded-xl flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #00ff4120, #00f0ff20)" }}
+              animate={{ boxShadow: ["0 0 8px rgba(0,255,65,0.1)", "0 0 20px rgba(0,255,65,0.3)", "0 0 8px rgba(0,255,65,0.1)"] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            >
+              <Banknote className="w-6 h-6 text-[#00ff41]" />
+            </motion.div>
+            <div>
+              <h2 className="text-white font-bold text-lg"><NeonText color="#00ff41">Minha Carteira</NeonText></h2>
+              <p className="text-gray-500 text-xs">Saldo disponível para saque</p>
+            </div>
+          </div>
+
+          {/* Main Balance */}
+          <div className="text-center py-4">
+            <p className="text-gray-500 text-xs mb-1">Saldo Disponível</p>
+            <motion.p className="text-3xl font-black text-[#00ff41]"
+              animate={{ textShadow: ["0 0 10px rgba(0,255,65,0.3)", "0 0 25px rgba(0,255,65,0.5)", "0 0 10px rgba(0,255,65,0.3)"] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            >
+              R$ {(wallet?.availableBalance || 0).toFixed(2)}
+            </motion.p>
+          </div>
+
+          {/* Breakdown */}
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="bg-[#0a0a12]/60 rounded-xl p-3 border border-[#1f1f2e]/30">
+              <p className="text-gray-500 text-[10px] mb-0.5">Faturamento Vendas</p>
+              <p className="text-[#00f0ff] font-bold text-sm">R$ {(wallet?.clientSalesProfit || 0).toFixed(2)}</p>
+            </div>
+            <div className="bg-[#0a0a12]/60 rounded-xl p-3 border border-[#1f1f2e]/30">
+              <p className="text-gray-500 text-[10px] mb-0.5">Faturamento PIX Interno</p>
+              <p className="text-[#8b5cf6] font-bold text-sm">R$ {(wallet?.internalPixProfit || 0).toFixed(2)}</p>
+            </div>
+            <div className="bg-[#0a0a12]/60 rounded-xl p-3 border border-[#1f1f2e]/30">
+              <p className="text-gray-500 text-[10px] mb-0.5">Saldo Total Acumulado</p>
+              <p className="text-white font-bold text-sm">R$ {(wallet?.totalBalance || 0).toFixed(2)}</p>
+            </div>
+            <div className="bg-[#0a0a12]/60 rounded-xl p-3 border border-[#1f1f2e]/30">
+              <p className="text-gray-500 text-[10px] mb-0.5">Total Sacado</p>
+              <p className="text-[#ff006e] font-bold text-sm">R$ {(wallet?.totalWithdrawn || 0).toFixed(2)}</p>
+            </div>
+          </div>
+
+          {/* Withdraw Form */}
+          <div className="space-y-3 pt-3 border-t border-[#1f1f2e]/40">
+            <h3 className="text-white font-bold text-sm flex items-center gap-2">
+              <ArrowDownToLine className="w-4 h-4 text-[#00ff41]" /> Solicitar Saque
+            </h3>
+            <div className="relative">
+              <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#00ff41]/60" />
+              <input
+                type="text" inputMode="decimal" value={withdrawAmount}
+                onChange={(e) => setWithdrawAmount(e.target.value.replace(/[^0-9.,]/g, ""))}
+                placeholder="Valor do saque"
+                className="w-full pl-9 pr-3 py-3 bg-[#0c0c14] border border-[#1f1f2e] rounded-xl text-white text-lg font-bold focus:outline-none focus:border-[#00ff41]/50 transition-all placeholder-gray-700"
+              />
+            </div>
+            {/* Quick amounts */}
+            <div className="grid grid-cols-4 gap-2">
+              {[50, 100, 200, 500].map((v) => (
+                <motion.button key={v} whileTap={{ scale: 0.93 }}
+                  onClick={() => setWithdrawAmount(String(v))}
+                  disabled={v > (wallet?.availableBalance || 0)}
+                  className={`py-2 rounded-lg text-xs font-bold border transition-all disabled:opacity-30 ${
+                    withdrawAmount === String(v)
+                      ? "bg-[#00ff41]/15 text-[#00ff41] border-[#00ff41]/30"
+                      : "bg-[#0c0c14] text-gray-400 border-[#1f1f2e] hover:border-[#00ff41]/30"
+                  }`}
+                >
+                  R${v}
+                </motion.button>
+              ))}
+            </div>
+            {/* Max balance button */}
+            {(wallet?.availableBalance || 0) > 0 && (
+              <motion.button whileTap={{ scale: 0.97 }}
+                onClick={() => setWithdrawAmount(String(wallet?.availableBalance || 0))}
+                className="w-full py-2 text-[#00ff41] text-xs font-medium bg-[#00ff41]/5 border border-[#00ff41]/15 rounded-lg hover:bg-[#00ff41]/10 transition-all"
+              >
+                Sacar tudo: R$ {(wallet?.availableBalance || 0).toFixed(2)}
+              </motion.button>
+            )}
+            <motion.button whileTap={{ scale: 0.97 }} onClick={handleWithdraw}
+              disabled={withdrawing || !withdrawAmount || parseFloat(withdrawAmount.replace(",", ".")) <= 0}
+              className="w-full py-3.5 font-bold text-sm rounded-xl transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+              style={{ background: withdrawing ? "#1f1f2e" : "linear-gradient(135deg, #00ff41 0%, #00f0ff 100%)", color: withdrawing ? "#888" : "#000" }}
+            >
+              {withdrawing ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Solicitando...</>
+              ) : (
+                <><ArrowDownToLine className="w-4 h-4" /> Solicitar Saque</>
+              )}
+            </motion.button>
+            <div className="flex items-start gap-2 p-2.5 bg-[#ff9f00]/5 border border-[#ff9f00]/15 rounded-xl">
+              <AlertCircle className="w-4 h-4 text-[#ff9f00] shrink-0 mt-0.5" />
+              <p className="text-[#ff9f00]/80 text-[10px] leading-relaxed">
+                Após solicitar, o Admin tem até <span className="font-bold text-[#ff9f00]">24 horas</span> para realizar a transferência para o endereço DEPIX cadastrado em Recebimentos.
+              </p>
+            </div>
+          </div>
+        </div>
+      </GlowCard>
+
+      {/* Date Filter */}
+      <GlowCard glowColor="#8b5cf6">
+        <div className="p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Filter className="w-3.5 h-3.5 text-[#8b5cf6]" />
+            <span className="text-white font-bold text-xs">Filtro por Data</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">De</label>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#8b5cf6]/60" />
+                <input type="date" value={dateFilterStart}
+                  onChange={(e) => setDateFilterStart(e.target.value)}
+                  className="w-full pl-8 pr-2 py-2 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50 transition-all [&::-webkit-calendar-picker-indicator]{filter:invert(1)}"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">Até</label>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#8b5cf6]/60" />
+                <input type="date" value={dateFilterEnd}
+                  onChange={(e) => setDateFilterEnd(e.target.value)}
+                  className="w-full pl-8 pr-2 py-2 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50 transition-all [&::-webkit-calendar-picker-indicator]{filter:invert(1)}"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            {[
+              { label: "Hoje", fn: () => { const t = new Date().toISOString().split("T")[0]; setDateFilterStart(t); setDateFilterEnd(t); } },
+              { label: "7 dias", fn: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 7); setDateFilterStart(s.toISOString().split("T")[0]); setDateFilterEnd(e.toISOString().split("T")[0]); } },
+              { label: "30 dias", fn: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 30); setDateFilterStart(s.toISOString().split("T")[0]); setDateFilterEnd(e.toISOString().split("T")[0]); } },
+              { label: "Tudo", fn: () => { setDateFilterStart("2020-01-01"); setDateFilterEnd(new Date().toISOString().split("T")[0]); } },
+            ].map((btn) => (
+              <motion.button key={btn.label} whileTap={{ scale: 0.93 }} onClick={btn.fn}
+                className="flex-1 py-1.5 rounded-lg text-[10px] font-bold bg-[#1f1f2e] text-gray-400 hover:text-white hover:bg-[#8b5cf6]/20 border border-[#1f1f2e] hover:border-[#8b5cf6]/30 transition-all"
+              >
+                {btn.label}
+              </motion.button>
+            ))}
+          </div>
+        </div>
+      </GlowCard>
+
+      {/* Withdrawal History */}
+      <GlowCard glowColor="#ff9f00">
+        <div className="p-4">
+          <h3 className="text-white font-bold text-sm flex items-center gap-2 mb-3">
+            <Clock className="w-4 h-4 text-[#ff9f00]" /> Histórico de Saques
+          </h3>
+          {filteredWithdrawals.length === 0 ? (
+            <div className="py-6 text-center">
+              <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
+                <ArrowDownToLine className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+              </motion.div>
+              <p className="text-gray-500 text-xs">Nenhum saque no período</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredWithdrawals.map((w: any) => {
+                const isPending = w.status === "pending";
+                const isCompleted = w.status === "completed";
+                const statusColor = isPending ? "#ff9f00" : isCompleted ? "#00ff41" : "#ff006e";
+                const statusLabel = isPending ? "Aguardando" : isCompleted ? "Concluído" : "Rejeitado";
+                const dateStr = w.requestedAt ? new Date(w.requestedAt).toLocaleDateString("pt-BR") : "—";
+                const timeStr = w.requestedAt ? new Date(w.requestedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
+                return (
+                  <motion.div key={w.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-3 p-3 rounded-xl bg-[#0a0a12]/60 border border-[#1f1f2e]/30"
+                  >
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${statusColor}15` }}>
+                      {isPending ? (
+                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
+                          <Clock className="w-4 h-4" style={{ color: statusColor }} />
+                        </motion.div>
+                      ) : isCompleted ? (
+                        <BadgeCheck className="w-4 h-4" style={{ color: statusColor }} />
+                      ) : (
+                        <X className="w-4 h-4" style={{ color: statusColor }} />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-xs">R$ {(w.amount || 0).toFixed(2)}</p>
+                      <p className="text-gray-500 text-[10px]">{dateStr} {timeStr}</p>
+                    </div>
+                    <div className="shrink-0">
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border"
+                        style={{ color: statusColor, backgroundColor: `${statusColor}15`, borderColor: `${statusColor}30` }}>
+                        {statusLabel}
+                      </span>
+                      {isCompleted && w.completedAt && (
+                        <p className="text-[#00ff41] text-[8px] mt-0.5 text-right">
+                          {new Date(w.completedAt).toLocaleDateString("pt-BR")}
+                        </p>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </GlowCard>
+    </motion.div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────
 export function VendedorPanel() {
   const navigate = useNavigate();
@@ -1343,6 +1731,7 @@ export function VendedorPanel() {
     { icon: <MessageSquare className="w-5 h-5" />, label: "Chat", id: "chat", badge: totalUnread || undefined },
     { icon: <ClipboardList className="w-5 h-5" />, label: "Pedidos", id: "pedidos", badge: pendingOrdersCount || undefined },
     { icon: <Package className="w-5 h-5" />, label: "Produtos", id: "produtos" },
+    { icon: <Banknote className="w-5 h-5" />, label: "Carteira", id: "carteira" },
     { icon: <FileText className="w-5 h-5" />, label: "Relatorios", id: "relatorios" },
     { icon: <Ticket className="w-5 h-5" />, label: "Convites", id: "convite" },
     { icon: <Wallet className="w-5 h-5" />, label: "Recebimentos", id: "recebimentos" },
@@ -2521,27 +2910,14 @@ export function VendedorPanel() {
             </motion.div>
           )}
 
+          {/* ===================== CARTEIRA ===================== */}
+          {activeTab === "carteira" && (
+            <VendedorCarteira currentUsername={currentUser.username} />
+          )}
+
           {/* ===================== RECEBIMENTOS ===================== */}
           {activeTab === "recebimentos" && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <GlowCard>
-                <div className="p-5">
-                  <h2 className="text-white font-bold text-lg mb-1"><NeonText>Recebimentos DEPIX</NeonText></h2>
-                  <p className="text-gray-500 text-xs mb-4">Endereco da sua carteira</p>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">Carteira DEPIX</label>
-                      <input type="text" placeholder="0x..."
-                        className="w-full px-3 py-2.5 bg-[#0a0a12] border border-[#1f1f2e] rounded-xl text-white text-sm focus:outline-none focus:border-[#00f0ff]/50 transition-all placeholder-gray-600" />
-                    </div>
-                    <motion.button whileTap={{ scale: 0.97 }}
-                      className="w-full py-3 font-bold text-white text-sm rounded-xl transition-all"
-                      style={{ background: "linear-gradient(135deg, #00f0ff 0%, #8b5cf6 100%)" }}
-                    >Salvar</motion.button>
-                  </div>
-                </div>
-              </GlowCard>
-            </motion.div>
+            <VendedorRecebimentos currentUsername={currentUser.username} />
           )}
 
           {/* ===================== TAXA MOTORISTA ===================== */}

@@ -515,3 +515,33 @@ export async function checkPresence(usernames: string[]) {
 export async function getDriverEarnings(username: string, days: number = 30) {
   return fetchAPI(`/driver-earnings/${username}?days=${days}`);
 }
+
+// ==================== VENDOR WALLET ====================
+export async function getVendorWallet(username: string) {
+  return fetchAPI(`/vendor-wallet/${username}`);
+}
+
+export async function savePixAddress(username: string, pixAddress: string) {
+  return fetchAPI('/vendor-wallet/pix-address', { method: 'POST', body: JSON.stringify({ username, pixAddress }) });
+}
+
+export async function getPixAddress(username: string) {
+  return fetchAPI(`/vendor-wallet/pix-address/${username}`);
+}
+
+export async function requestWithdrawal(username: string, amount: number) {
+  return fetchAPI('/vendor-wallet/withdraw', { method: 'POST', body: JSON.stringify({ username, amount }) });
+}
+
+export async function getVendorWithdrawals(username: string) {
+  return fetchAPI(`/vendor-wallet/withdrawals/${username}`);
+}
+
+// ==================== ADMIN WITHDRAWAL REQUESTS ====================
+export async function getAdminWithdrawalRequests() {
+  return fetchAPI('/admin/withdrawal-requests');
+}
+
+export async function completeWithdrawal(withdrawalId: string) {
+  return fetchAPI('/admin/withdrawal-complete', { method: 'POST', body: JSON.stringify({ withdrawalId }) });
+}
