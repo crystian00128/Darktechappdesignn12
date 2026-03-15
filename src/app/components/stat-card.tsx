@@ -10,6 +10,7 @@ interface StatCardProps {
     value: number;
     isPositive: boolean;
   };
+  onClick?: () => void;
 }
 
 const colorMap = {
@@ -43,7 +44,7 @@ const colorMap = {
   },
 };
 
-export function StatCard({ title, value, icon, color, trend }: StatCardProps) {
+export function StatCard({ title, value, icon, color, trend, onClick }: StatCardProps) {
   const c = colorMap[color];
 
   return (
@@ -51,7 +52,8 @@ export function StatCard({ title, value, icon, color, trend }: StatCardProps) {
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -3, boxShadow: `0 0 25px ${c.glow}25` }}
-      className={`relative bg-gradient-to-br ${c.bg} border ${c.border} rounded-2xl p-4 ${c.shadow} backdrop-blur-sm`}
+      className={`relative bg-gradient-to-br ${c.bg} border ${c.border} rounded-2xl p-4 ${c.shadow} backdrop-blur-sm ${onClick ? "cursor-pointer active:scale-[0.97] transition-transform" : ""}`}
+      onClick={onClick}
     >
       {/* Subtle top glow */}
       <motion.div

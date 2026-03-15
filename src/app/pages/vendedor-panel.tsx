@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { SidebarLayout } from "../components/sidebar-layout";
 import { motion, AnimatePresence } from "motion/react";
@@ -16,7 +16,7 @@ import {
   ClipboardList, Trash2, Clock, CheckCircle2, UserPlus, RefreshCw, ArrowLeft,
   Shield, Zap, Send, ChevronLeft, CheckCheck, Mic, Phone, Video, Camera, Image as ImageIcon,
   Paperclip, Play, Pause, Square, MicOff, PhoneOff, VideoOff, Maximize2, QrCode, Loader2,
-  Navigation,
+  Navigation, Calendar, Filter, Eye,
 } from "lucide-react";
 
 // ─── Shared Neon Components ─────────────────────────────────────────
@@ -1237,6 +1237,14 @@ export function VendedorPanel() {
   const [driverPresence, setDriverPresence] = useState<Record<string, boolean>>({});
   const [assigningDriver, setAssigningDriver] = useState<string | null>(null);
 
+  // ─── Dashboard Date Filter & Detail Views ───
+  const [dateFilterStart, setDateFilterStart] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().split("T")[0];
+  });
+  const [dateFilterEnd, setDateFilterEnd] = useState(() => new Date().toISOString().split("T")[0]);
+  const [dashboardDetail, setDashboardDetail] = useState<null | "vendas" | "comissao-admin" | "comissao-motorista" | "faturamento">(null);
+  const [driverCommissionConfigs, setDriverCommissionConfigs] = useState<Record<string, { taxaFixa: number; taxaPercent: number }>>({});
+
   const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
   const isAdminViewing = currentUser.adminViewing === true;
   const callSystem = useCallSystem(currentUser.username);
@@ -1394,6 +1402,49 @@ export function VendedorPanel() {
     }
   };
 
+  // ─── Load driver commission configs for all motoristas ───
+  useEffect(() => {
+    if (motoristas.length === 0) return;
+    motoristas.forEach(async (m: any) => {
+      try {
+        const r = await api.getDriverCommission(currentUser.username, m.username);
+        if (r.success && r.config) {
+          setDriverCommissionConfigs((prev) => ({
+            ...prev,
+            [m.username]: { taxaFixa: r.config.taxaFixa ?? 5, taxaPercent: r.config.taxaPercent ?? 8 },
+          }));
+        }
+      } catch {
+        setDriverCommissionConfigs((prev) => ({
+          ...prev,
+          [m.username]: prev[m.username] || { taxaFixa: 5, taxaPercent: 8 },
+        }));
+      }
+    });
+  }, [motoristas.length, currentUser.username]);
+
+  // ─── Filtered orders by date ───
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o: any) => {
+      if (o.status === "cancelled") return false;
+      const d = (o.createdAt || "").split("T")[0];
+      return d >= dateFilterStart && d <= dateFilterEnd;
+    });
+  }, [orders, dateFilterStart, dateFilterEnd]);
+
+  const filteredTotalSales = useMemo(() => filteredOrders.reduce((s: number, o: any) => s + (o.total || 0), 0), [filteredOrders]);
+  const filteredAdminTax = useMemo(() => parseFloat((filteredTotalSales * (adminCommissionRate / 100)).toFixed(2)), [filteredTotalSales, adminCommissionRate]);
+
+  const calcDriverCommissionForOrder = useCallback((order: any) => {
+    const driverUser = order.driverUsername;
+    if (!driverUser) return 0;
+    const cfg = driverCommissionConfigs[driverUser] || { taxaFixa: 5, taxaPercent: 8 };
+    return parseFloat((cfg.taxaFixa + (cfg.taxaPercent / 100) * (order.total || 0)).toFixed(2));
+  }, [driverCommissionConfigs]);
+
+  const filteredDriverTax = useMemo(() => filteredOrders.reduce((s: number, o: any) => s + calcDriverCommissionForOrder(o), 0), [filteredOrders, calcDriverCommissionForOrder]);
+  const filteredSellerProfit = useMemo(() => parseFloat((filteredTotalSales - filteredAdminTax - filteredDriverTax).toFixed(2)), [filteredTotalSales, filteredAdminTax, filteredDriverTax]);
+
   const FIXED_FEE = 0.99; // Taxa fixa constante descontada do vendedor
   const MIN_PIX_AMOUNT = 10; // Valor minimo da API PixWave
 
@@ -1491,10 +1542,17 @@ export function VendedorPanel() {
     delivered: { label: "Entregue", color: "#00ff41" }, cancelled: { label: "Cancelado", color: "#ff006e" },
   };
 
-  const salesData = orders.length > 0 ? (() => {
-    const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return d.toISOString().split("T")[0]; });
-    return last7.map((date) => ({ name: date.slice(5), vendas: orders.filter((o) => o.createdAt?.startsWith(date) && o.status !== "cancelled").reduce((s: number, o: any) => s + (o.total || 0), 0) }));
-  })() : [];
+  const salesData = useMemo(() => {
+    if (filteredOrders.length === 0) return [];
+    // Group sales by date within filter range
+    const dateMap: Record<string, number> = {};
+    filteredOrders.forEach((o: any) => {
+      const d = (o.createdAt || "").split("T")[0];
+      if (d) dateMap[d] = (dateMap[d] || 0) + (o.total || 0);
+    });
+    const sortedDates = Object.keys(dateMap).sort();
+    return sortedDates.map((date) => ({ name: date.slice(5), vendas: dateMap[date] }));
+  }, [filteredOrders]);
 
   const chatContacts = [...clientes, ...motoristas].map((u) => ({ username: u.username, name: u.name || u.username, photo: u.photo || "", role: u.role }));
 
@@ -1610,15 +1668,186 @@ export function VendedorPanel() {
           {/* ===================== DASHBOARD ===================== */}
           {activeTab === "dashboard" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
+              {/* Date Filter */}
+              <GlowCard glowColor="#8b5cf6">
+                <div className="p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <motion.div className="p-1.5 rounded-lg bg-[#8b5cf6]/10 border border-[#8b5cf6]/20"
+                      animate={{ boxShadow: ["0 0 4px #8b5cf600", "0 0 8px #8b5cf630", "0 0 4px #8b5cf600"] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    >
+                      <Filter className="w-3.5 h-3.5 text-[#8b5cf6]" />
+                    </motion.div>
+                    <span className="text-white font-bold text-xs">Filtro por Data</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-1">De</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#8b5cf6]/60" />
+                        <input type="date" value={dateFilterStart}
+                          onChange={(e) => setDateFilterStart(e.target.value)}
+                          className="w-full pl-8 pr-2 py-2 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50 transition-all [&::-webkit-calendar-picker-indicator]{filter:invert(1)}"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-1">Ate</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#8b5cf6]/60" />
+                        <input type="date" value={dateFilterEnd}
+                          onChange={(e) => setDateFilterEnd(e.target.value)}
+                          className="w-full pl-8 pr-2 py-2 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50 transition-all [&::-webkit-calendar-picker-indicator]{filter:invert(1)}"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    {[
+                      { label: "Hoje", fn: () => { const t = new Date().toISOString().split("T")[0]; setDateFilterStart(t); setDateFilterEnd(t); } },
+                      { label: "7 dias", fn: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 7); setDateFilterStart(s.toISOString().split("T")[0]); setDateFilterEnd(e.toISOString().split("T")[0]); } },
+                      { label: "30 dias", fn: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 30); setDateFilterStart(s.toISOString().split("T")[0]); setDateFilterEnd(e.toISOString().split("T")[0]); } },
+                      { label: "Este mes", fn: () => { const d = new Date(); d.setDate(1); setDateFilterStart(d.toISOString().split("T")[0]); setDateFilterEnd(new Date().toISOString().split("T")[0]); } },
+                    ].map((btn) => (
+                      <motion.button key={btn.label} whileTap={{ scale: 0.93 }} onClick={btn.fn}
+                        className="flex-1 py-1.5 rounded-lg text-[10px] font-bold bg-[#1f1f2e] text-gray-400 hover:text-white hover:bg-[#8b5cf6]/20 border border-[#1f1f2e] hover:border-[#8b5cf6]/30 transition-all"
+                      >
+                        {btn.label}
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+              </GlowCard>
+
+              {/* Stat Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <StatCard title="Vendas Hoje" value={`R$ ${(metrics.todaySales || 0).toLocaleString()}`} icon={<DollarSign className="w-full h-full" />} color="cyan" trend={{ value: 0, isPositive: true }} />
-                <StatCard title="Total Mes" value={`R$ ${(metrics.totalSales || 0).toLocaleString()}`} icon={<ShoppingBag className="w-full h-full" />} color="green" trend={{ value: 0, isPositive: true }} />
-                <StatCard title="Clientes" value={String(clientes.length)} icon={<Users className="w-full h-full" />} color="purple" trend={{ value: 0, isPositive: true }} />
-                <StatCard title="Motoristas" value={String(motoristas.length)} icon={<Truck className="w-full h-full" />} color="pink" trend={{ value: 0, isPositive: true }} />
+                <StatCard title="Vendas Total" value={`R$ ${filteredTotalSales.toFixed(2)}`} icon={<DollarSign className="w-full h-full" />} color="cyan" onClick={() => setDashboardDetail("vendas")} />
+                <StatCard title={`Comissao Admin`} value={`R$ ${filteredAdminTax.toFixed(2)}`} icon={<TrendingUp className="w-full h-full" />} color="pink" onClick={() => setDashboardDetail("comissao-admin")} />
+                <StatCard title="Comissao Motorista" value={`R$ ${filteredDriverTax.toFixed(2)}`} icon={<Truck className="w-full h-full" />} color="purple" onClick={() => setDashboardDetail("comissao-motorista")} />
+                <StatCard title="Faturamento" value={`R$ ${filteredSellerProfit.toFixed(2)}`} icon={<Wallet className="w-full h-full" />} color="green" onClick={() => setDashboardDetail("faturamento")} />
               </div>
 
+              {/* Detail Views */}
+              <AnimatePresence>
+                {dashboardDetail && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                    <GlowCard glowColor={
+                      dashboardDetail === "vendas" ? "#00f0ff" :
+                      dashboardDetail === "comissao-admin" ? "#ff00ff" :
+                      dashboardDetail === "comissao-motorista" ? "#8b5cf6" : "#00ff41"
+                    }>
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-white font-bold text-sm flex items-center gap-2">
+                            <Eye className="w-4 h-4" style={{ color:
+                              dashboardDetail === "vendas" ? "#00f0ff" :
+                              dashboardDetail === "comissao-admin" ? "#ff00ff" :
+                              dashboardDetail === "comissao-motorista" ? "#8b5cf6" : "#00ff41"
+                            }} />
+                            {dashboardDetail === "vendas" && "Historico de Vendas"}
+                            {dashboardDetail === "comissao-admin" && `Comissao Admin (${adminCommissionRate}%)`}
+                            {dashboardDetail === "comissao-motorista" && "Comissao Motorista"}
+                            {dashboardDetail === "faturamento" && "Faturamento Liquido"}
+                          </h3>
+                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDashboardDetail(null)}
+                            className="p-1.5 hover:bg-[#1f1f2e] rounded-lg text-gray-500 transition-colors">
+                            <X className="w-4 h-4" />
+                          </motion.button>
+                        </div>
+
+                        {filteredOrders.length === 0 ? (
+                          <div className="py-6 text-center">
+                            <p className="text-gray-500 text-xs">Nenhuma venda no periodo selecionado</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-[350px] overflow-y-auto">
+                            {filteredOrders.map((order: any) => {
+                              const orderTotal = order.total || 0;
+                              const orderAdminTax = parseFloat((orderTotal * (adminCommissionRate / 100)).toFixed(2));
+                              const orderDriverTax = calcDriverCommissionForOrder(order);
+                              const orderProfit = parseFloat((orderTotal - orderAdminTax - orderDriverTax).toFixed(2));
+                              const dateStr = order.createdAt ? new Date(order.createdAt).toLocaleDateString("pt-BR") : "—";
+                              const timeStr = order.createdAt ? new Date(order.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
+
+                              return (
+                                <div key={order.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-[#0a0a12]/60 border border-[#1f1f2e]/30">
+                                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{
+                                    background: dashboardDetail === "vendas" ? "#00f0ff10" :
+                                      dashboardDetail === "comissao-admin" ? "#ff00ff10" :
+                                      dashboardDetail === "comissao-motorista" ? "#8b5cf610" : "#00ff4110"
+                                  }}>
+                                    <ShoppingBag className="w-3.5 h-3.5" style={{
+                                      color: dashboardDetail === "vendas" ? "#00f0ff" :
+                                        dashboardDetail === "comissao-admin" ? "#ff00ff" :
+                                        dashboardDetail === "comissao-motorista" ? "#8b5cf6" : "#00ff41"
+                                    }} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-white text-xs font-semibold">#{order.id.slice(-6).toUpperCase()}</p>
+                                    <p className="text-gray-500 text-[10px]">@{order.clientUsername} • {dateStr} {timeStr}</p>
+                                    {dashboardDetail === "comissao-motorista" && order.driverUsername && (
+                                      <p className="text-[#8b5cf6] text-[10px]">Motorista: @{order.driverUsername}</p>
+                                    )}
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    {dashboardDetail === "vendas" && (
+                                      <p className="text-[#00f0ff] font-bold text-xs">R$ {orderTotal.toFixed(2)}</p>
+                                    )}
+                                    {dashboardDetail === "comissao-admin" && (
+                                      <>
+                                        <p className="text-[#ff00ff] font-bold text-xs">R$ {orderAdminTax.toFixed(2)}</p>
+                                        <p className="text-gray-600 text-[9px]">de R$ {orderTotal.toFixed(2)}</p>
+                                      </>
+                                    )}
+                                    {dashboardDetail === "comissao-motorista" && (
+                                      <>
+                                        <p className="text-[#8b5cf6] font-bold text-xs">R$ {orderDriverTax.toFixed(2)}</p>
+                                        <p className="text-gray-600 text-[9px]">{order.driverUsername ? `de R$ ${orderTotal.toFixed(2)}` : "Sem motorista"}</p>
+                                      </>
+                                    )}
+                                    {dashboardDetail === "faturamento" && (
+                                      <>
+                                        <p className={`font-bold text-xs ${orderProfit >= 0 ? "text-[#00ff41]" : "text-[#ff006e]"}`}>R$ {orderProfit.toFixed(2)}</p>
+                                        <p className="text-gray-600 text-[9px]">de R$ {orderTotal.toFixed(2)}</p>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {/* Totals row */}
+                            <div className="flex items-center justify-between pt-2 mt-2 border-t border-[#1f1f2e]/50 px-1">
+                              <span className="text-gray-400 text-xs font-medium">{filteredOrders.length} venda(s)</span>
+                              <span className="font-bold text-sm" style={{
+                                color: dashboardDetail === "vendas" ? "#00f0ff" :
+                                  dashboardDetail === "comissao-admin" ? "#ff00ff" :
+                                  dashboardDetail === "comissao-motorista" ? "#8b5cf6" : "#00ff41"
+                              }}>
+                                Total: R$ {
+                                  dashboardDetail === "vendas" ? filteredTotalSales.toFixed(2) :
+                                  dashboardDetail === "comissao-admin" ? filteredAdminTax.toFixed(2) :
+                                  dashboardDetail === "comissao-motorista" ? filteredDriverTax.toFixed(2) :
+                                  filteredSellerProfit.toFixed(2)
+                                }
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </GlowCard>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Recharts-based dashboard charts */}
-              <VendedorDashboardCharts salesData={salesData} metrics={metrics} adminCommissionRate={adminCommissionRate} />
+              <VendedorDashboardCharts
+                salesData={salesData}
+                totalSales={filteredTotalSales}
+                adminTax={filteredAdminTax}
+                driverTax={filteredDriverTax}
+                sellerProfit={filteredSellerProfit}
+                adminCommissionRate={adminCommissionRate}
+              />
             </motion.div>
           )}
 

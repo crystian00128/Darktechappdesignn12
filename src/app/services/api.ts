@@ -4,11 +4,16 @@ const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-4237
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort('Request timeout'), 15000);
 
   // If caller provided a signal, link it to our internal controller
   if (options.signal) {
-    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    // If already aborted, bail out immediately without throwing
+    if (options.signal.aborted) {
+      clearTimeout(timeoutId);
+      return { success: false, _aborted: true };
+    }
+    options.signal.addEventListener('abort', () => controller.abort('Caller aborted'), { once: true });
   }
 
   try {
@@ -29,6 +34,13 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     }
 
     return data;
+  } catch (err: any) {
+    // Silently swallow AbortErrors — these are expected from timeouts,
+    // component unmounts, and rapid polling cancellations
+    if (err?.name === 'AbortError') {
+      return { success: false, _aborted: true };
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }

@@ -39,14 +39,17 @@ function PieTooltip({ active, payload }: any) {
 
 interface VendedorChartsProps {
   salesData: { name: string; vendas: number }[];
-  metrics: any;
+  totalSales: number;
+  adminTax: number;
+  driverTax: number;
+  sellerProfit: number;
   adminCommissionRate: number;
 }
 
-export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRate }: VendedorChartsProps) {
+export function VendedorDashboardCharts({ salesData, totalSales, adminTax, driverTax, sellerProfit, adminCommissionRate }: VendedorChartsProps) {
   const chartId = useId().replace(/:/g, "");
   const gradientId = `gradVendorSales-${chartId}`;
-  const hasData = (metrics.totalSales || 0) > 0;
+  const hasData = totalSales > 0;
 
   const chartSales = useMemo(() => salesData.length > 0
     ? salesData.map((d, i) => ({
@@ -67,21 +70,15 @@ export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRat
     return map;
   }, [chartSales]);
 
-  const fixedFee = 0.99;
-  const adminTax = metrics.adminTax || 0;
-  const netSales = metrics.netSales || 0;
-  const totalTransactions = (metrics.totalOrders || 0) + (metrics.directPixCount || 0);
-  const totalFixed = totalTransactions * fixedFee;
-
   const pieData = useMemo(() => hasData ? [
-    { id: "pie-net", name: "Liquido", value: Math.max(0, netSales - totalFixed), color: "#00ff41" },
     { id: "pie-admin", name: `Taxa Admin (${adminCommissionRate}%)`, value: adminTax, color: "#ff00ff" },
-    { id: "pie-fixed", name: "Taxa Fixa (R$0,99)", value: totalFixed, color: "#8b5cf6" },
+    { id: "pie-driver", name: "Taxa Motorista", value: driverTax, color: "#ff9f00" },
+    { id: "pie-profit", name: "Lucro Vendedor", value: Math.max(0, sellerProfit), color: "#00ff41" },
   ] : [
-    { id: "pie-net", name: "Liquido", value: 70, color: "#00ff41" },
-    { id: "pie-admin", name: "Taxa Admin", value: 20, color: "#ff00ff" },
-    { id: "pie-fixed", name: "Taxa Fixa", value: 10, color: "#8b5cf6" },
-  ], [hasData, netSales, totalFixed, adminTax, adminCommissionRate]);
+    { id: "pie-admin", name: "Taxa Admin", value: 25, color: "#ff00ff" },
+    { id: "pie-driver", name: "Taxa Motorista", value: 15, color: "#ff9f00" },
+    { id: "pie-profit", name: "Lucro Vendedor", value: 60, color: "#00ff41" },
+  ], [hasData, adminTax, driverTax, sellerProfit, adminCommissionRate]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -95,7 +92,7 @@ export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRat
         </defs>
       </svg>
 
-      {/* Area Chart - Sales */}
+      {/* Area Chart - Vendas Total */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative rounded-2xl overflow-hidden">
         <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
           style={{ background: "conic-gradient(from 0deg, #00f0ff20, transparent, #00f0ff10, transparent)" }}
@@ -109,7 +106,7 @@ export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRat
             >
               <TrendingUp className="w-4 h-4 text-[#00f0ff]" />
             </motion.div>
-            <h3 className="text-white font-bold text-sm">Vendas da Semana</h3>
+            <h3 className="text-white font-bold text-sm">Vendas Total</h3>
           </div>
           <div className="h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -132,7 +129,7 @@ export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRat
         </div>
       </motion.div>
 
-      {/* Pie Chart - Distribution */}
+      {/* Pie Chart - Faturamento Distribution */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative rounded-2xl overflow-hidden">
         <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
           style={{ background: "conic-gradient(from 0deg, #ff00ff20, transparent, #ff00ff10, transparent)" }}
@@ -146,7 +143,7 @@ export function VendedorDashboardCharts({ salesData, metrics, adminCommissionRat
             >
               <Wallet className="w-4 h-4 text-[#ff00ff]" />
             </motion.div>
-            <h3 className="text-white font-bold text-sm">Distribuicao</h3>
+            <h3 className="text-white font-bold text-sm">Distribuicao do Faturamento</h3>
           </div>
           <div className="h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
