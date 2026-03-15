@@ -260,8 +260,10 @@ export function ClientePanel() {
     pending: { label: "Pendente", color: "#ff9f00" },
     accepted: { label: "Aceito", color: "#00f0ff" },
     preparing: { label: "Preparando", color: "#8b5cf6" },
-    delivering: { label: "A caminho", color: "#ff00ff" },
-    delivered: { label: "Entregue", color: "#00ff41" },
+    delivering: { label: "Enviado", color: "#ff9f00" },
+    driver_accepted: { label: "Motorista Aceitou", color: "#00f0ff" },
+    on_the_way: { label: "Motorista a Caminho", color: "#ff00ff" },
+    delivered: { label: "Entrega Concluída", color: "#00ff41" },
     cancelled: { label: "Cancelado", color: "#ff006e" },
   };
 
@@ -431,7 +433,7 @@ export function ClientePanel() {
 
           {/* Pedidos - Enhanced Real-time Tracking */}
           {activeTab === "pedidos" && (
-            <ClienteOrdersTab orders={orders} loadOrders={loadOrders} statusLabels={statusLabels} />
+            <ClienteOrdersTab orders={orders} loadOrders={loadOrders} statusLabels={statusLabels} currentUsername={currentUser.username} currentUserName={currentUser.name} />
           )}
 
           {/* Adicionar Vendedor */}

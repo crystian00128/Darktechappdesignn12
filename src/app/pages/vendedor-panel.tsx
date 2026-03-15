@@ -16,6 +16,7 @@ import {
   ClipboardList, Trash2, Clock, CheckCircle2, UserPlus, RefreshCw, ArrowLeft,
   Shield, Zap, Send, ChevronLeft, CheckCheck, Mic, Phone, Video, Camera, Image as ImageIcon,
   Paperclip, Play, Pause, Square, MicOff, PhoneOff, VideoOff, Maximize2, QrCode, Loader2,
+  Navigation,
 } from "lucide-react";
 
 // ─── Shared Neon Components ─────────────────────────────────────────
@@ -1738,7 +1739,7 @@ export function VendedorPanel() {
                     <Zap className="w-4 h-4 text-[#00f0ff]" />
                     <h3 className="text-white font-bold text-sm">Em Andamento</h3>
                     <span className="ml-auto px-2 py-0.5 bg-[#00f0ff]/20 text-[#00f0ff] rounded-full text-[10px] font-bold">
-                      {orders.filter((o: any) => ["accepted", "preparing", "delivering"].includes(o.status)).length}
+                      {orders.filter((o: any) => ["accepted", "preparing", "delivering", "driver_accepted", "on_the_way"].includes(o.status)).length}
                     </span>
                   </div>
                   <div className="space-y-2.5">
@@ -1755,7 +1756,7 @@ export function VendedorPanel() {
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
                                 <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${statusInfo.color}15` }}>
-                                  {order.status === "delivering" ? <Truck className="w-4 h-4" style={{ color: statusInfo.color }} /> : <ShoppingBag className="w-4 h-4" style={{ color: statusInfo.color }} />}
+                                  {["delivering", "driver_accepted", "on_the_way"].includes(order.status) ? <Truck className="w-4 h-4" style={{ color: statusInfo.color }} /> : <ShoppingBag className="w-4 h-4" style={{ color: statusInfo.color }} />}
                                 </div>
                                 <div>
                                   <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>

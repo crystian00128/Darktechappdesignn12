@@ -1885,7 +1885,7 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
         metrics: {
           totalDeliveries,
           totalCommission,
-          pendingDeliveries: orders.filter((o: any) => o.status === "delivering").length,
+          pendingDeliveries: orders.filter((o: any) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status)).length,
           totalOrders: orders.length,
         },
       });

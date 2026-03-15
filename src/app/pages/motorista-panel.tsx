@@ -844,7 +844,7 @@ export function MotoristaPanel() {
     ? [{ username: vendedor.username, name: vendedor.name || "Vendedor", photo: vendedor.photo || "", role: "vendedor" }]
     : [];
   const activeClientUsernames = new Set(
-    orders.filter((o) => o.status === "delivering" && o.driverUsername === currentUser.username).map((o) => o.clientUsername)
+    orders.filter((o) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status) && o.driverUsername === currentUser.username).map((o) => o.clientUsername)
   );
   const clienteChatContacts: ChatContact[] = vendedorClients
     .filter((c: any) => activeClientUsernames.has(c.username))

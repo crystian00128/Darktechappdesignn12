@@ -6,16 +6,6 @@ import {
 } from "lucide-react";
 import * as api from "../services/api";
 
-const ORDER_STEPS = [
-  { key: "pending", label: "Pendente", icon: <Clock className="w-3.5 h-3.5" />, color: "#ff9f00" },
-  { key: "accepted", label: "Aceito", icon: <Check className="w-3.5 h-3.5" />, color: "#00f0ff" },
-  { key: "preparing", label: "Preparando", icon: <Package className="w-3.5 h-3.5" />, color: "#8b5cf6" },
-  { key: "delivering", label: "Enviado", icon: <Truck className="w-3.5 h-3.5" />, color: "#ff9f00" },
-  { key: "driver_accepted", label: "Aceito", icon: <Check className="w-3.5 h-3.5" />, color: "#00f0ff" },
-  { key: "on_the_way", label: "A Caminho", icon: <Navigation className="w-3.5 h-3.5" />, color: "#ff00ff" },
-  { key: "delivered", label: "Entregue", icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "#00ff41" },
-];
-
 // Simplified steps for the progress tracker (merging sub-statuses)
 const TRACKER_STEPS = [
   { key: "pending", label: "Pendente", icon: <Clock className="w-3.5 h-3.5" />, color: "#ff9f00", matches: ["pending"] },
@@ -28,11 +18,6 @@ const TRACKER_STEPS = [
 
 function getTrackerIndex(status: string): number {
   return TRACKER_STEPS.findIndex((s) => s.matches.includes(status));
-}
-
-function getStepIndex(status: string): number {
-  const idx = ORDER_STEPS.findIndex((s) => s.key === status);
-  return idx >= 0 ? idx : -1;
 }
 
 function getStatusInfo(status: string) {
@@ -49,10 +34,10 @@ function getStatusInfo(status: string) {
   return map[status] || { label: status, color: "#666", description: "" };
 }
 
-function OrderTrackingCard({ order }: { order: any }) {
+function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (order: any) => void }) {
   const [expanded, setExpanded] = useState(false);
   const statusInfo = getStatusInfo(order.status);
-  const currentStepIdx = getStepIndex(order.status);
+  const currentStepIdx = getTrackerIndex(order.status);
   const isActive = !["delivered", "cancelled"].includes(order.status);
   const isCancelled = order.status === "cancelled";
 
@@ -106,7 +91,7 @@ function OrderTrackingCard({ order }: { order: any }) {
               >
                 {isCancelled ? <X className="w-4 h-4" style={{ color: statusInfo.color }} /> :
                   order.status === "delivered" ? <CheckCircle2 className="w-4 h-4" style={{ color: statusInfo.color }} /> :
-                    order.status === "delivering" ? <Truck className="w-4 h-4" style={{ color: statusInfo.color }} /> :
+                    ["delivering", "driver_accepted", "on_the_way"].includes(order.status) ? <Truck className="w-4 h-4" style={{ color: statusInfo.color }} /> :
                       <ShoppingBag className="w-4 h-4" style={{ color: statusInfo.color }} />}
               </motion.div>
               <div>
@@ -133,7 +118,7 @@ function OrderTrackingCard({ order }: { order: any }) {
           {!isCancelled && (
             <div className="mb-3">
               <div className="flex items-center justify-between px-0.5">
-                {ORDER_STEPS.map((step, i) => {
+                {TRACKER_STEPS.map((step, i) => {
                   const isCompleted = currentStepIdx >= i;
                   const isCurrent = currentStepIdx === i;
                   const stepColor = isCompleted ? step.color : "#1f1f2e";
@@ -157,11 +142,11 @@ function OrderTrackingCard({ order }: { order: any }) {
                           {step.label}
                         </span>
                       </div>
-                      {i < ORDER_STEPS.length - 1 && (
+                      {i < TRACKER_STEPS.length - 1 && (
                         <div className="flex-1 h-0.5 mx-1 mb-4 rounded-full overflow-hidden bg-[#1f1f2e]">
                           <motion.div
                             className="h-full rounded-full"
-                            style={{ backgroundColor: currentStepIdx > i ? ORDER_STEPS[i + 1].color : "transparent" }}
+                            style={{ backgroundColor: currentStepIdx > i ? TRACKER_STEPS[i + 1].color : "transparent" }}
                             initial={{ width: "0%" }}
                             animate={{ width: currentStepIdx > i ? "100%" : currentStepIdx === i ? "50%" : "0%" }}
                             transition={{ duration: 0.6, ease: "easeOut" }}
@@ -250,6 +235,20 @@ function OrderTrackingCard({ order }: { order: any }) {
             </motion.div>
           )}
 
+          {/* Chat with Driver Button */}
+          {order.driverUsername && ["driver_accepted", "on_the_way"].includes(order.status) && onOpenChat && (
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              onClick={() => onOpenChat(order)}
+              className="w-full mb-3 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 bg-gradient-to-r from-[#8b5cf6]/15 to-[#00f0ff]/15 border border-[#8b5cf6]/25 text-[#8b5cf6] hover:from-[#8b5cf6]/25 hover:to-[#00f0ff]/25 transition-all"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              Chat com Motorista
+              <LocateFixed className="w-3.5 h-3.5 text-[#00f0ff]" />
+              Enviar Localização
+            </motion.button>
+          )}
+
           {/* Delivery Address */}
           {order.deliveryAddress && (
             <div className="flex items-start gap-1.5 mb-3 px-0.5">
@@ -311,14 +310,72 @@ function OrderTrackingCard({ order }: { order: any }) {
   );
 }
 
-export function ClienteOrdersTab({ orders, loadOrders, statusLabels }: {
+export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUsername, currentUserName }: {
   orders: any[];
   loadOrders: () => void;
   statusLabels: Record<string, { label: string; color: string }>;
+  currentUsername?: string;
+  currentUserName?: string;
 }) {
   // Auto-polling for active orders
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasActiveOrders = orders.some((o) => !["delivered", "cancelled"].includes(o.status));
+
+  // Delivery chat state
+  const [chatOrder, setChatOrder] = useState<any>(null);
+  const [chatMsgs, setChatMsgs] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [sendingLoc, setSendingLoc] = useState(false);
+  const chatRef = useRef<HTMLDivElement>(null);
+  const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadChatMsgs = useCallback(async () => {
+    if (!chatOrder?.driverUsername || !currentUsername) return;
+    try {
+      const res = await api.getMessages(currentUsername, chatOrder.driverUsername);
+      if (res.success) setChatMsgs(res.messages || []);
+    } catch {}
+  }, [currentUsername, chatOrder?.driverUsername]);
+
+  useEffect(() => {
+    if (chatOrder) {
+      loadChatMsgs();
+      chatPollRef.current = setInterval(loadChatMsgs, 3000);
+      return () => { if (chatPollRef.current) clearInterval(chatPollRef.current); };
+    } else { setChatMsgs([]); }
+  }, [chatOrder?.id, loadChatMsgs]);
+
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, [chatMsgs]);
+
+  const handleSendChat = async () => {
+    if (!chatInput.trim() || !chatOrder || !currentUsername) return;
+    const text = chatInput.trim();
+    setChatInput("");
+    try {
+      await api.sendMessage(currentUsername, chatOrder.driverUsername, text);
+      api.notifyNewMessage(chatOrder.driverUsername, currentUserName || currentUsername, text, "text").catch(() => {});
+      loadChatMsgs();
+    } catch {}
+  };
+
+  const handleSendLocation = async () => {
+    if (!chatOrder || !currentUsername || sendingLoc) return;
+    setSendingLoc(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+      });
+      const { latitude, longitude } = pos.coords;
+      const locText = `📍 Minha localização: https://maps.google.com/?q=${latitude},${longitude}`;
+      await api.sendMessage(currentUsername, chatOrder.driverUsername, locText, "location");
+      api.notifyNewMessage(chatOrder.driverUsername, currentUserName || currentUsername, "📍 Localização compartilhada", "location").catch(() => {});
+      loadChatMsgs();
+    } catch {
+      alert("Não foi possível obter localização. Verifique as permissões do GPS.");
+    } finally { setSendingLoc(false); }
+  };
 
   useEffect(() => {
     if (hasActiveOrders) {
@@ -394,7 +451,7 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels }: {
               </div>
               <div className="space-y-3">
                 {[...activeOrders].reverse().map((order) => (
-                  <OrderTrackingCard key={order.id} order={order} />
+                  <OrderTrackingCard key={order.id} order={order} onOpenChat={currentUsername ? setChatOrder : undefined} />
                 ))}
               </div>
             </div>
@@ -417,6 +474,97 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels }: {
           )}
         </div>
       )}
+
+      {/* ═══ Delivery Chat Fullscreen Overlay ═══ */}
+      <AnimatePresence>
+        {chatOrder && currentUsername && (
+          <motion.div
+            initial={{ opacity: 0, y: "100%" }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            className="fixed inset-0 z-[75] bg-[#050508] flex flex-col"
+          >
+            <div className="shrink-0 bg-[#0a0a12]/95 backdrop-blur-xl border-b border-[#1f1f2e]/60 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <motion.button whileTap={{ scale: 0.9 }} onClick={() => setChatOrder(null)}
+                  className="p-1.5 rounded-xl hover:bg-[#1f1f2e] text-gray-400 transition-colors shrink-0">
+                  <ChevronLeft className="w-5 h-5" />
+                </motion.button>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#ff00ff]/20 to-[#8b5cf6]/15 flex items-center justify-center">
+                  <Truck className="w-4 h-4 text-[#ff00ff]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-bold text-sm truncate">Motorista @{chatOrder.driverUsername}</p>
+                  <p className="text-gray-500 text-[10px]">Pedido #{chatOrder.id?.slice(-6).toUpperCase()}</p>
+                </div>
+                <motion.span animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 2, repeat: Infinity }}
+                  className="px-2 py-1 rounded-full text-[9px] font-bold"
+                  style={{ background: chatOrder.status === "driver_accepted" ? "#00f0ff20" : "#ff00ff20", color: chatOrder.status === "driver_accepted" ? "#00f0ff" : "#ff00ff" }}>
+                  {chatOrder.status === "driver_accepted" ? "ACEITOU" : "A CAMINHO"}
+                </motion.span>
+              </div>
+              <motion.button whileTap={{ scale: 0.96 }} onClick={handleSendLocation} disabled={sendingLoc}
+                className="w-full mt-2.5 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                style={{ background: "linear-gradient(135deg, #00f0ff15, #8b5cf620)", border: "1px solid #00f0ff30" }}>
+                {sendingLoc ? (
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-3.5 h-3.5 border-2 border-[#00f0ff]/30 border-t-[#00f0ff] rounded-full" />
+                ) : (<LocateFixed className="w-4 h-4 text-[#00f0ff]" />)}
+                <span className="text-[#00f0ff]">Enviar Minha Localizacao</span>
+                <MapPin className="w-3.5 h-3.5 text-[#ff00ff]" />
+              </motion.button>
+            </div>
+
+            <div ref={chatRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+              {chatMsgs.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <motion.div animate={{ opacity: [0.2, 0.5, 0.2], scale: [0.95, 1, 0.95] }} transition={{ duration: 3, repeat: Infinity }}
+                    className="w-16 h-16 rounded-2xl bg-[#1f1f2e]/50 flex items-center justify-center mb-3">
+                    <MessageCircle className="w-7 h-7 text-gray-600" />
+                  </motion.div>
+                  <p className="text-gray-500 text-sm font-medium">Chat com o Motorista</p>
+                  <p className="text-[#00f0ff] text-[10px] mt-2 font-medium">Envie sua localizacao para o motorista!</p>
+                </div>
+              )}
+              {chatMsgs.map((msg: any) => {
+                const isMine = msg.from === currentUsername;
+                const isLocation = msg.type === "location" || msg.text?.includes("maps.google.com");
+                return (
+                  <motion.div key={msg.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                    className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 ${isMine ? "bg-gradient-to-br from-[#00f0ff]/15 to-[#8b5cf6]/15 border border-[#00f0ff]/10" : "bg-[#12121a] border border-[#1f1f2e]/60"}`}>
+                      {isLocation ? (
+                        <a href={msg.text?.match(/https:\/\/maps\.google\.com[^\s]*/)?.[0] || "#"} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-[#00f0ff] text-xs font-medium hover:underline">
+                          <MapPin className="w-4 h-4 text-[#ff00ff]" /> <span>Ver no Mapa</span> <ArrowRight className="w-3 h-3" />
+                        </a>
+                      ) : (<p className="text-white text-[13px] leading-relaxed break-words">{msg.text}</p>)}
+                      <p className={`text-[9px] mt-1 ${isMine ? "text-right text-gray-500" : "text-gray-600"}`}>
+                        {(() => { try { return new Date(msg.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })()}
+                      </p>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            <div className="shrink-0 bg-[#0a0a12]/95 backdrop-blur-xl border-t border-[#1f1f2e]/60 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
+                  placeholder="Digite uma mensagem..."
+                  className="flex-1 px-4 py-2.5 bg-[#12121a] border border-[#1f1f2e] rounded-2xl text-white text-sm focus:outline-none focus:border-[#00f0ff]/40 placeholder-gray-600 transition-all" />
+                <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendChat} disabled={!chatInput.trim()}
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 disabled:opacity-30 transition-all"
+                  style={{ background: chatInput.trim() ? "linear-gradient(135deg, #00f0ff, #8b5cf6)" : "#1f1f2e" }}>
+                  <Send className="w-4 h-4 text-white" />
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
