@@ -202,6 +202,8 @@ export function AdminPanel() {
     finally { setSavingRate(null); }
   };
   const adminCodes = hierarchy?.admin?.codesGenerated || [];
+  // Only show unused (pending) codes - used codes disappear
+  const pendingAdminCodes = adminCodes.filter((c: any) => !c.used);
 
   const menuItems = [
     { icon: <LayoutDashboard className="w-5 h-5" />, label: "Dashboard", id: "dashboard" },
@@ -727,42 +729,35 @@ export function AdminPanel() {
           <GlowCard glowColor="#8b5cf6">
             <div className="p-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-white font-bold text-sm">Codigos ({adminCodes.length})</h3>
+                <h3 className="text-white font-bold text-sm">Codigos Pendentes ({pendingAdminCodes.length})</h3>
                 <div className="flex items-center gap-2 text-[11px]">
-                  <span className="text-[#00ff41] flex items-center gap-0.5">
-                    <CheckCircle2 className="w-2.5 h-2.5" /> {adminCodes.filter((c: any) => c.used).length}
-                  </span>
                   <span className="text-[#ff9f00] flex items-center gap-0.5">
-                    <Clock className="w-2.5 h-2.5" /> {adminCodes.filter((c: any) => !c.used).length}
+                    <Clock className="w-2.5 h-2.5" /> {pendingAdminCodes.length} aguardando
                   </span>
                 </div>
               </div>
 
-              {adminCodes.length === 0 ? (
+              {pendingAdminCodes.length === 0 ? (
                 <div className="text-center py-6">
                   <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
                     <Ticket className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                   </motion.div>
-                  <p className="text-gray-600 text-xs">Nenhum codigo gerado</p>
+                  <p className="text-gray-600 text-xs">Nenhum codigo pendente</p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {[...adminCodes].reverse().map((codeObj: any, i: number) => (
+                  {[...pendingAdminCodes].reverse().map((codeObj: any, i: number) => (
                     <motion.div
                       key={`${codeObj.code}-${i}`}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      className={`p-3.5 rounded-xl border transition-all ${
-                        codeObj.used
-                          ? "bg-[#00ff41]/5 border-[#00ff41]/15"
-                          : "bg-[#ff9f00]/5 border-[#ff9f00]/20 hover:border-[#00f0ff]/30"
-                      }`}
+                      className="p-3.5 rounded-xl border transition-all bg-[#ff9f00]/5 border-[#ff9f00]/20 hover:border-[#00f0ff]/30"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className={`p-1.5 rounded-lg shrink-0 ${codeObj.used ? "bg-[#00ff41]/15" : "bg-[#ff9f00]/15"}`}>
-                            {codeObj.used ? <CheckCircle2 className="w-3.5 h-3.5 text-[#00ff41]" /> : <Clock className="w-3.5 h-3.5 text-[#ff9f00]" />}
+                          <div className="p-1.5 rounded-lg shrink-0 bg-[#ff9f00]/15">
+                            <Clock className="w-3.5 h-3.5 text-[#ff9f00]" />
                           </div>
                           <div className="min-w-0">
                             <span className="text-white font-mono text-sm block truncate">{codeObj.code}</span>
@@ -770,25 +765,15 @@ export function AdminPanel() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {codeObj.used ? (
-                            <div className="text-right">
-                              <p className="text-[#00ff41] text-xs font-medium flex items-center gap-1">
-                                <UserPlus className="w-3 h-3" /> @{codeObj.usedBy}
-                              </p>
-                            </div>
-                          ) : (
-                            <>
-                              <span className="px-2 py-0.5 bg-[#ff9f00]/15 text-[#ff9f00] rounded-full text-[11px] font-medium">
-                                Disponivel
-                              </span>
-                              <button
-                                onClick={() => copyToClipboard(codeObj.code)}
-                                className="p-1.5 rounded-lg hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors"
-                              >
-                                {copied === codeObj.code ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </>
-                          )}
+                          <span className="px-2 py-0.5 bg-[#ff9f00]/15 text-[#ff9f00] rounded-full text-[11px] font-medium">
+                            Aguardando
+                          </span>
+                          <button
+                            onClick={() => copyToClipboard(codeObj.code)}
+                            className="p-1.5 rounded-lg hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors"
+                          >
+                            {copied === codeObj.code ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
                         </div>
                       </div>
                     </motion.div>

@@ -1749,6 +1749,7 @@ app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
       order.updatedAt = now;
       if (driverUsername) order.driverUsername = driverUsername;
       if (status === "driver_accepted") order.driverAcceptedAt = now;
+      if (status === "collected") order.collectedAt = now;
       if (status === "on_the_way") order.onTheWayAt = now;
       if (status === "delivered") {
         order.deliveredAt = now;
@@ -1806,6 +1807,7 @@ app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
         preparing: "👨‍🍳 Pedido em preparo",
         delivering: "🚗 Atribuído para entrega!",
         driver_accepted: "✅ Motorista aceitou!",
+        collected: "📦 Pedido coletado!",
         on_the_way: "🏍️ Motorista a caminho!",
         delivered: "📦 Entrega concluída!",
         cancelled: "❌ Pedido cancelado",
@@ -1816,6 +1818,8 @@ app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
         title: label,
         body: status === "driver_accepted"
           ? `O motorista aceitou seu pedido #${orderId.slice(-6)}! Envie sua localização no chat.`
+          : status === "collected"
+          ? `O motorista coletou seu pedido #${orderId.slice(-6)} no vendedor!`
           : status === "on_the_way"
           ? `O motorista está a caminho com seu pedido #${orderId.slice(-6)}!`
           : status === "delivered"
@@ -1836,11 +1840,13 @@ app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
         }).catch(() => {});
       }
       
-      if (["driver_accepted", "on_the_way", "delivered"].includes(status)) {
+      if (["driver_accepted", "collected", "on_the_way", "delivered"].includes(status)) {
         sendPushToUser(vendorUsername, {
           title: label,
           body: status === "driver_accepted"
             ? `Motorista aceitou entrega #${orderId.slice(-6)}`
+            : status === "collected"
+            ? `Motorista coletou pedido #${orderId.slice(-6)} na sua loja`
             : status === "on_the_way"
             ? `Motorista saiu para entregar #${orderId.slice(-6)}`
             : `Pedido #${orderId.slice(-6)} entregue! Comissão registrada.`,
@@ -1996,7 +2002,9 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
           if (sale.createdAt?.startsWith(today)) todaySales += sale.amount || 0;
         }
         totalSales += vendorSales;
-        totalAdminTax += vendorSales * vendorRateDecimal;
+        // Admin tax = rate% of vendorSales + R$0.99 per paid order
+        const paidOrderCount = orders.filter((o: any) => o.status !== "cancelled" && o.paymentStatus === "paid").length;
+        totalAdminTax += vendorSales * vendorRateDecimal + paidOrderCount * 0.99 + directPixSales.length * 0.99;
       }
       
       return c.json({
@@ -2045,6 +2053,11 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
       const commissionRate = user.adminCommissionRate !== undefined ? user.adminCommissionRate : 15;
       const commissionDecimal = commissionRate / 100;
       
+      // Count paid orders for fixed fee calculation
+      const paidOrdersCount = orders.filter((o: any) => o.status !== "cancelled" && o.paymentStatus === "paid").length;
+      // Admin tax = rate% of totalSales + R$0.99 per paid order + R$0.99 per direct PIX
+      const totalAdminTax = totalSales * commissionDecimal + (paidOrdersCount + directPixSales.length) * 0.99;
+      
       return c.json({
         success: true,
         metrics: {
@@ -2056,8 +2069,8 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
           totalClientes: createdBy.filter((u: any) => u.role === "cliente").length,
           totalMotoristas: createdBy.filter((u: any) => u.role === "motorista").length,
           adminCommissionRate: commissionRate,
-          adminTax: totalSales * commissionDecimal,
-          netSales: totalSales * (1 - commissionDecimal),
+          adminTax: parseFloat(totalAdminTax.toFixed(2)),
+          netSales: parseFloat((totalSales - totalAdminTax).toFixed(2)),
           directPixSales: directPixTotal,
           directPixCount: directPixSales.length,
         },
@@ -2066,13 +2079,38 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
     
     if (user.role === "motorista") {
       const orders = await kv.get(`orders:driver:${username}`) || [];
+      const earnings = await kv.get(`driver:earnings:${username}`) || [];
       let totalDeliveries = 0;
       let totalCommission = 0;
+      let todayCommission = 0;
+      const today = new Date().toISOString().split("T")[0];
       
-      for (const order of orders) {
-        if (order.status === "delivered" && order.paymentStatus === "paid") {
+      // Use actual recorded earnings (from driver:earnings) if available
+      if (earnings.length > 0) {
+        for (const earning of earnings) {
           totalDeliveries++;
-          totalCommission += (order.total || 0) * 0.08 + 5;
+          totalCommission += earning.commission || 0;
+          if ((earning.deliveredAt || "").startsWith(today)) {
+            todayCommission += earning.commission || 0;
+          }
+        }
+      } else {
+        // Fallback: calculate from orders with their stored driverCommission or feeBreakdown
+        for (const order of orders) {
+          if (order.status === "delivered") {
+            totalDeliveries++;
+            if (order.driverCommission?.total) {
+              totalCommission += order.driverCommission.total;
+              if ((order.deliveredAt || order.updatedAt || "").startsWith(today)) {
+                todayCommission += order.driverCommission.total;
+              }
+            } else if (order.feeBreakdown?.driverTotal) {
+              totalCommission += order.feeBreakdown.driverTotal;
+              if ((order.deliveredAt || order.updatedAt || "").startsWith(today)) {
+                todayCommission += order.feeBreakdown.driverTotal;
+              }
+            }
+          }
         }
       }
       
@@ -2080,9 +2118,11 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
         success: true,
         metrics: {
           totalDeliveries,
-          totalCommission,
-          pendingDeliveries: orders.filter((o: any) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status)).length,
+          totalCommission: Math.round(totalCommission * 100) / 100,
+          todayCommission: Math.round(todayCommission * 100) / 100,
+          pendingDeliveries: orders.filter((o: any) => ["delivering", "driver_accepted", "collected", "on_the_way"].includes(o.status)).length,
           totalOrders: orders.length,
+          earningsCount: earnings.length,
         },
       });
     }
@@ -2099,6 +2139,110 @@ app.get("/make-server-42377006/metrics/:username", async (c) => {
     });
   } catch (error) {
     console.error("❌ Erro ao buscar métricas:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== DRIVER EARNINGS HISTORY ====================
+app.get("/make-server-42377006/driver-earnings/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const daysParam = c.req.query("days");
+    const days = daysParam ? Math.min(90, Math.max(1, parseInt(daysParam))) : 30;
+
+    const user = await kv.get(`user:${username}`);
+    if (!user || user.role !== "motorista") {
+      return c.json({ success: false, error: "Motorista não encontrado" }, 404);
+    }
+
+    const earnings = await kv.get(`driver:earnings:${username}`) || [];
+    const orders = await kv.get(`orders:driver:${username}`) || [];
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() - days);
+    const startStr = startDate.toISOString().split("T")[0];
+
+    // Build daily map
+    const dailyMap: Record<string, { entregas: number; ganhos: number }> = {};
+    for (let d = days - 1; d >= 0; d--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      const key = date.toISOString().split("T")[0];
+      dailyMap[key] = { entregas: 0, ganhos: 0 };
+    }
+
+    // Filter earnings in period
+    const filteredEarnings: any[] = [];
+    let totalEarnings = 0;
+    let totalDeliveries = 0;
+
+    if (earnings.length > 0) {
+      for (const e of earnings) {
+        const dateKey = (e.deliveredAt || "").split("T")[0];
+        if (dateKey >= startStr) {
+          filteredEarnings.push(e);
+          totalEarnings += e.commission || 0;
+          totalDeliveries++;
+          if (dailyMap[dateKey]) {
+            dailyMap[dateKey].entregas++;
+            dailyMap[dateKey].ganhos += e.commission || 0;
+          }
+        }
+      }
+    } else {
+      // Fallback: use orders with driverCommission
+      for (const order of orders) {
+        if (order.status === "delivered") {
+          const dateKey = (order.deliveredAt || order.updatedAt || "").split("T")[0];
+          if (dateKey >= startStr) {
+            const comm = order.driverCommission?.total || order.feeBreakdown?.driverTotal || 0;
+            filteredEarnings.push({
+              orderId: order.id,
+              vendorUsername: order.vendorUsername,
+              clientUsername: order.clientUsername,
+              total: order.total || 0,
+              commission: comm,
+              taxaFixa: order.driverCommission?.fixa || 0,
+              taxaPercent: order.driverCommission?.perc || 0,
+              deliveredAt: order.deliveredAt || order.updatedAt,
+            });
+            totalEarnings += comm;
+            totalDeliveries++;
+            if (dailyMap[dateKey]) {
+              dailyMap[dateKey].entregas++;
+              dailyMap[dateKey].ganhos += comm;
+            }
+          }
+        }
+      }
+    }
+
+    const dailyData = Object.entries(dailyMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, data]) => ({
+        date,
+        label: new Date(date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" }),
+        ...data,
+        ganhos: Math.round(data.ganhos * 100) / 100,
+      }));
+
+    const avgPerDelivery = totalDeliveries > 0 ? totalEarnings / totalDeliveries : 0;
+
+    return c.json({
+      success: true,
+      earnings: {
+        history: filteredEarnings.sort((a: any, b: any) => (b.deliveredAt || "").localeCompare(a.deliveredAt || "")),
+        dailyData,
+        totals: {
+          earnings: Math.round(totalEarnings * 100) / 100,
+          deliveries: totalDeliveries,
+          avgPerDelivery: Math.round(avgPerDelivery * 100) / 100,
+          days,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ Erro ao buscar earnings do motorista:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });

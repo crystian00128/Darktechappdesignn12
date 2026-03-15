@@ -510,3 +510,8 @@ export async function checkPresence(usernames: string[]) {
     body: JSON.stringify({ usernames }),
   });
 }
+
+// ==================== DRIVER EARNINGS ====================
+export async function getDriverEarnings(username: string, days: number = 30) {
+  return fetchAPI(`/driver-earnings/${username}?days=${days}`);
+}

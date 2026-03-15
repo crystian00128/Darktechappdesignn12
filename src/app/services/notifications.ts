@@ -61,6 +61,7 @@ export function notifyOrderStatus(status: string, orderId: string) {
     preparing: "Pedido em preparo",
     delivering: "Atribuído para entrega",
     driver_accepted: "Motorista aceitou a entrega",
+    collected: "Pedido coletado pelo motorista",
     on_the_way: "Motorista a caminho",
     delivered: "Entrega concluída",
     cancelled: "Pedido cancelado",

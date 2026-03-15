@@ -2,9 +2,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ShoppingBag, Package, RefreshCw, Clock, Check, Truck, MapPin,
-  Navigation, CheckCircle2, X, ChevronDown, ChevronUp, MessageCircle, LocateFixed, Send, ChevronLeft, ArrowRight,
+  Navigation, CheckCircle2, X, ChevronDown, ChevronUp, MessageCircle, LocateFixed, Send, ChevronLeft, ArrowRight, Timer,
 } from "lucide-react";
 import * as api from "../services/api";
+
+const ORDER_VISIBILITY_MINUTES = 15;
 
 // Simplified steps for the progress tracker (merging sub-statuses)
 const TRACKER_STEPS = [
@@ -34,12 +36,38 @@ function getStatusInfo(status: string) {
   return map[status] || { label: status, color: "#666", description: "" };
 }
 
+// Countdown hook for active order visibility
+function useOrderCountdown(createdAt: string, isActive: boolean) {
+  const [remaining, setRemaining] = useState(() => {
+    if (!isActive) return -1;
+    const diff = ORDER_VISIBILITY_MINUTES * 60 * 1000 - (Date.now() - new Date(createdAt).getTime());
+    return Math.max(0, diff);
+  });
+
+  useEffect(() => {
+    if (!isActive) return;
+    const interval = setInterval(() => {
+      const diff = ORDER_VISIBILITY_MINUTES * 60 * 1000 - (Date.now() - new Date(createdAt).getTime());
+      setRemaining(Math.max(0, diff));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [createdAt, isActive]);
+
+  const mins = Math.floor(remaining / 60000);
+  const secs = Math.floor((remaining % 60000) / 1000);
+  const expired = remaining <= 0 && isActive;
+  const formatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  const progress = isActive ? remaining / (ORDER_VISIBILITY_MINUTES * 60 * 1000) : 0;
+  return { remaining, mins, secs, expired, formatted, progress };
+}
+
 function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (order: any) => void }) {
   const [expanded, setExpanded] = useState(false);
   const statusInfo = getStatusInfo(order.status);
   const currentStepIdx = getTrackerIndex(order.status);
   const isActive = !["delivered", "cancelled"].includes(order.status);
   const isCancelled = order.status === "cancelled";
+  const countdown = useOrderCountdown(order.createdAt, isActive);
 
   // Time elapsed since creation
   const elapsed = (() => {
@@ -110,6 +138,29 @@ function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (or
               </motion.span>
             </div>
           </div>
+
+          {/* Countdown Timer for active orders */}
+          {isActive && (
+            <div className="flex items-center gap-2 mb-2 px-0.5">
+              <Timer className="w-3 h-3 text-gray-500" />
+              <div className="flex-1 h-1.5 bg-[#1f1f2e] rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${countdown.progress * 100}%`,
+                    background: countdown.mins < 3 ? "linear-gradient(90deg, #ff006e, #ff9f00)" : `linear-gradient(90deg, ${statusInfo.color}80, ${statusInfo.color})`,
+                  }}
+                />
+              </div>
+              <motion.span
+                className={`text-[10px] font-mono font-bold ${countdown.mins < 3 ? "text-[#ff006e]" : "text-gray-400"}`}
+                animate={countdown.mins < 3 ? { opacity: [1, 0.4, 1] } : {}}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
+                {countdown.formatted}
+              </motion.span>
+            </div>
+          )}
 
           {/* Status Description */}
           <p className="text-gray-400 text-[11px] mb-3 pl-0.5">{statusInfo.description}</p>
@@ -386,7 +437,12 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUser
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [hasActiveOrders, loadOrders]);
 
-  const activeOrders = orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
+  const activeOrders = orders.filter((o) => {
+    if (["delivered", "cancelled"].includes(o.status)) return false;
+    // Hide active orders after 15 minutes
+    const elapsed = Date.now() - new Date(o.createdAt).getTime();
+    return elapsed < ORDER_VISIBILITY_MINUTES * 60 * 1000;
+  });
   const completedOrders = orders.filter((o) => ["delivered", "cancelled"].includes(o.status));
 
   return (

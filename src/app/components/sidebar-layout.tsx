@@ -372,8 +372,8 @@ export function SidebarLayout({
                 {activeTab === item.id && (
                   <motion.div
                     layoutId="activeTabDot"
-                    className="absolute -top-1 w-6 h-[2px] rounded-full bg-[#00f0ff]"
-                    style={{ boxShadow: "0 0 8px rgba(0,240,255,0.6)" }}
+                    className="absolute -top-1 w-6 h-[2px] rounded-full"
+                    style={{ backgroundColor: "#00f0ff", boxShadow: "0 0 8px rgba(0,240,255,0.6)" }}
                   />
                 )}
                 <div
@@ -422,8 +422,8 @@ export function SidebarLayout({
                 {activeTab === item.id && (
                   <motion.div
                     layoutId="activeTabDot"
-                    className="absolute -top-1 w-6 h-[2px] rounded-full bg-[#00f0ff]"
-                    style={{ boxShadow: "0 0 8px rgba(0,240,255,0.6)" }}
+                    className="absolute -top-1 w-6 h-[2px] rounded-full"
+                    style={{ backgroundColor: "#00f0ff", boxShadow: "0 0 8px rgba(0,240,255,0.6)" }}
                   />
                 )}
                 <div

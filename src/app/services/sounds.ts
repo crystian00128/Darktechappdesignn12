@@ -287,6 +287,32 @@ export function playBoot() {
   playNoise(0.15, 0.02, 0.2);
 }
 
+/** ═══ DELIVERY COMPLETE — Celebration fanfare ═══ */
+export function playDeliveryComplete() {
+  // Fanfare ascending
+  playTone(523, "sine", 0.2, 0.12);        // C5
+  playTone(659, "sine", 0.2, 0.1, 0.1);    // E5
+  playTone(784, "sine", 0.2, 0.1, 0.2);    // G5
+  playTone(1047, "sine", 0.3, 0.14, 0.3);  // C6
+  playTone(1319, "sine", 0.25, 0.1, 0.4);  // E6
+  playTone(1568, "sine", 0.35, 0.12, 0.5); // G6
+  // Shimmer
+  playTone(2093, "sine", 0.2, 0.05, 0.55);
+  playTone(2637, "sine", 0.15, 0.04, 0.6);
+  playTone(3136, "sine", 0.12, 0.03, 0.65);
+  // Sub boom
+  playTone(65, "sine", 0.5, 0.1);
+  playNoise(0.15, 0.03, 0.3);
+}
+
+/** ═══ COLLECTED — Item picked up confirmation ═══ */
+export function playCollected() {
+  playTone(600, "sine", 0.12, 0.1);
+  playTone(900, "sine", 0.12, 0.1, 0.08);
+  playTone(1200, "triangle", 0.15, 0.08, 0.16);
+  playNoise(0.08, 0.03, 0.1);
+}
+
 /** ═══ DELETE — Destructive action ═══ */
 export function playDelete() {
   playSweep(800, 100, "sawtooth", 0.3, 0.1);

@@ -4,7 +4,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Wallet } from "lucide-react";
+import { TrendingUp, Wallet, QrCode } from "lucide-react";
 
 function NeonTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -44,9 +44,12 @@ interface VendedorChartsProps {
   driverTax: number;
   sellerProfit: number;
   adminCommissionRate: number;
+  // Internal PIX stats (direct vendor wallet payments)
+  directPixTotal?: number;
+  directPixCount?: number;
 }
 
-export function VendedorDashboardCharts({ salesData, totalSales, adminTax, driverTax, sellerProfit, adminCommissionRate }: VendedorChartsProps) {
+export function VendedorDashboardCharts({ salesData, totalSales, adminTax, driverTax, sellerProfit, adminCommissionRate, directPixTotal = 0, directPixCount = 0 }: VendedorChartsProps) {
   const chartId = useId().replace(/:/g, "");
   const gradientId = `gradVendorSales-${chartId}`;
   const hasData = totalSales > 0;
@@ -129,43 +132,91 @@ export function VendedorDashboardCharts({ salesData, totalSales, adminTax, drive
         </div>
       </motion.div>
 
-      {/* Pie Chart - Faturamento Distribution */}
+      {/* Internal PIX Stats (Direct vendor wallet payments) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative rounded-2xl overflow-hidden">
         <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
-          style={{ background: "conic-gradient(from 0deg, #ff00ff20, transparent, #ff00ff10, transparent)" }}
+          style={{ background: "conic-gradient(from 0deg, #00ff4120, transparent, #00f0ff10, transparent)" }}
           animate={{ rotate: [0, 360] }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
         />
         <div className="relative bg-[#0c0c14]/90 backdrop-blur-xl rounded-2xl border border-[#1f1f2e]/50 m-[1px] p-4">
           <div className="flex items-center gap-2 mb-4">
-            <motion.div className="p-2 rounded-lg bg-[#ff00ff]/10 border border-[#ff00ff]/20"
-              animate={{ boxShadow: ["0 0 6px #ff00ff00", "0 0 12px #ff00ff30", "0 0 6px #ff00ff00"] }}
+            <motion.div className="p-2 rounded-lg bg-[#00ff41]/10 border border-[#00ff41]/20"
+              animate={{ boxShadow: ["0 0 6px #00ff4100", "0 0 12px #00ff4130", "0 0 6px #00ff4100"] }}
               transition={{ duration: 2, repeat: Infinity }}
             >
-              <Wallet className="w-4 h-4 text-[#ff00ff]" />
+              <Wallet className="w-4 h-4 text-[#00ff41]" />
             </motion.div>
-            <h3 className="text-white font-bold text-sm">Distribuicao do Faturamento</h3>
+            <h3 className="text-white font-bold text-sm">Vendas Internas (PIX Vendedor)</h3>
           </div>
-          <div className="h-[180px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie key="pie-dist" data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={3} dataKey="value" nameKey="name" strokeWidth={0} isAnimationActive={false}>
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-v-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip key="pie-tooltip" content={<PieTooltip />} />
-                <Legend
-                  key="pie-legend"
-                  formatter={(value: string) => <span className="text-gray-400 text-[10px]">{value}</span>}
-                  iconType="circle"
-                  iconSize={7}
-                  wrapperStyle={{ paddingTop: 6, fontSize: 10 }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          
+          {/* Internal PIX Summary Cards */}
+          <div className="space-y-3">
+            {/* Total Venda Interna */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-[#00f0ff]/5 border border-[#00f0ff]/15">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[#00f0ff]/15 flex items-center justify-center">
+                  <Wallet className="w-4 h-4 text-[#00f0ff]" />
+                </div>
+                <div>
+                  <p className="text-gray-400 text-[10px] uppercase tracking-wider">Total Venda Interna</p>
+                  <p className="text-gray-500 text-[9px]">{directPixCount} PIX efetuado{directPixCount !== 1 ? "s" : ""}</p>
+                </div>
+              </div>
+              <motion.p className="text-[#00f0ff] font-black text-lg"
+                animate={{ textShadow: ["0 0 4px #00f0ff40", "0 0 10px #00f0ff60", "0 0 4px #00f0ff40"] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
+                R$ {directPixTotal.toFixed(2)}
+              </motion.p>
+            </div>
+
+            {/* Total Comissao Admin Interno */}
+            {(() => {
+              const internalAdminTax = directPixTotal > 0 ? parseFloat((directPixTotal * (adminCommissionRate / 100) + directPixCount * 0.99).toFixed(2)) : 0;
+              return (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#ff006e]/5 border border-[#ff006e]/15">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-[#ff006e]/15 flex items-center justify-center">
+                      <TrendingUp className="w-4 h-4 text-[#ff006e]" />
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-[10px] uppercase tracking-wider">Total Comissao Admin Interno</p>
+                      <p className="text-gray-500 text-[9px]">{adminCommissionRate}% + R$0,99/pix</p>
+                    </div>
+                  </div>
+                  <p className="text-[#ff006e] font-black text-lg">R$ {internalAdminTax.toFixed(2)}</p>
+                </div>
+              );
+            })()}
+
+            {/* Faturamento Total Interno */}
+            {(() => {
+              const internalAdminTax = directPixTotal > 0 ? parseFloat((directPixTotal * (adminCommissionRate / 100) + directPixCount * 0.99).toFixed(2)) : 0;
+              const internalProfit = parseFloat((directPixTotal - internalAdminTax).toFixed(2));
+              return (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#00ff41]/5 border border-[#00ff41]/15">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-[#00ff41]/15 flex items-center justify-center">
+                      <Wallet className="w-4 h-4 text-[#00ff41]" />
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-[10px] uppercase tracking-wider">Faturamento Total Interno</p>
+                      <p className="text-gray-500 text-[9px]">Após descontar comissão admin</p>
+                    </div>
+                  </div>
+                  <motion.p className={`font-black text-lg ${internalProfit >= 0 ? "text-[#00ff41]" : "text-[#ff006e]"}`}
+                    animate={{ textShadow: internalProfit > 0 ? ["0 0 4px #00ff4140", "0 0 10px #00ff4160", "0 0 4px #00ff4140"] : undefined }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                  >
+                    R$ {internalProfit.toFixed(2)}
+                  </motion.p>
+                </div>
+              );
+            })()}
           </div>
-          {!hasData && (
-            <p className="text-gray-600 text-[10px] text-center mt-1 italic">Valores simulados</p>
+
+          {directPixCount === 0 && (
+            <p className="text-gray-600 text-[10px] text-center mt-3 italic">Nenhum PIX interno efetuado ainda</p>
           )}
         </div>
       </motion.div>

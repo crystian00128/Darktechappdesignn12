@@ -20,6 +20,7 @@ import {
   WifiOff,
   Wifi,
   AlertTriangle,
+  MapPin,
 } from "lucide-react";
 import { useLinkedVendors, type LinkedVendor } from "../hooks/useLinkedVendors";
 import { useCallSystem } from "../hooks/useCallSystem";
@@ -57,6 +58,9 @@ export function ClientePanel() {
   const [showCart, setShowCart] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryLocation, setDeliveryLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [locationError, setLocationError] = useState("");
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<"waiting" | "generating" | "pix_ready" | "polling" | "success" | "error" | null>(null);
   const [pixInvoice, setPixInvoice] = useState<any>(null);
@@ -195,12 +199,15 @@ export function ClientePanel() {
     setPixCopied(false);
 
     try {
+      const locationAddress = deliveryLocation
+        ? `📍 https://maps.google.com/?q=${deliveryLocation.lat},${deliveryLocation.lng}`
+        : deliveryAddress || "Localização não informada";
       const orderRes = await api.createOrder({
         clientUsername: currentUser.username,
         vendorUsername: cartVendor,
         items: cart.map((c) => ({ name: c.product.name, price: c.product.price, qty: c.qty, productId: c.product.id })),
         total: cartTotal,
-        deliveryAddress,
+        deliveryAddress: locationAddress,
         paymentSource: "client",
       });
 
@@ -230,8 +237,16 @@ export function ClientePanel() {
               if (statusRes.success && statusRes.invoice?.status === "paid") {
                 if (pixPollingRef.current) clearInterval(pixPollingRef.current);
                 setPaymentStatus("success");
+                // Auto-send location to driver chat after payment confirmed
+                if (deliveryLocation) {
+                  const locText = `📍 Minha localização de entrega: https://maps.google.com/?q=${deliveryLocation.lat},${deliveryLocation.lng}`;
+                  // We'll send location once the driver is assigned - store it for later
+                  // For now, save the location in the order data
+                  console.log("[PIX] Payment confirmed, location saved:", locText);
+                }
                 setCart([]);
                 setDeliveryAddress("");
+                setDeliveryLocation(null);
                 loadOrders();
                 setTimeout(() => {
                   setShowPaymentModal(false);
@@ -331,6 +346,7 @@ export function ClientePanel() {
     preparing: { label: "Preparando", color: "#8b5cf6" },
     delivering: { label: "Enviado", color: "#ff9f00" },
     driver_accepted: { label: "Motorista Aceitou", color: "#00f0ff" },
+    collected: { label: "Pedido Coletado", color: "#8b5cf6" },
     on_the_way: { label: "Motorista a Caminho", color: "#ff00ff" },
     delivered: { label: "Entrega Concluída", color: "#00ff41" },
     cancelled: { label: "Cancelado", color: "#ff006e" },
@@ -717,8 +733,8 @@ export function ClientePanel() {
                   transition={{ type: "spring", stiffness: 400, damping: 30 }} />
               )}
               {activeTab === tab.id && (
-                <motion.div layoutId="clienteActiveDot" className="absolute -top-1 w-6 h-[2px] rounded-full bg-[#00f0ff]"
-                  style={{ boxShadow: "0 0 8px rgba(0,240,255,0.6)" }} />
+                <motion.div layoutId="clienteActiveDot" className="absolute -top-1 w-6 h-[2px] rounded-full"
+                  style={{ backgroundColor: "#00f0ff", boxShadow: "0 0 8px rgba(0,240,255,0.6)" }} />
               )}
               <div className={`relative z-10 w-5 h-5 ${activeTab === tab.id ? "text-[#00f0ff]" : "text-gray-600"} transition-colors`}>
                 {tab.icon}
@@ -778,12 +794,51 @@ export function ClientePanel() {
                 ))}
               </div>
               <div className="p-4 border-t border-[#1f1f2e] space-y-3">
-                <input type="text" value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
-                  placeholder="Endereco de entrega..."
-                  className="w-full px-4 py-3 bg-[#1f1f2e] border border-[#2a2a3e] rounded-xl text-white focus:outline-none focus:border-[#00f0ff] text-base" />
-                
-                {/* Fee Breakdown */}
-                {feePreview && (
+                {/* Location Button instead of address input */}
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={async () => {
+                    setGettingLocation(true);
+                    setLocationError("");
+                    try {
+                      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+                      });
+                      const { latitude, longitude } = pos.coords;
+                      setDeliveryLocation({ lat: latitude, lng: longitude });
+                      setDeliveryAddress(`📍 https://maps.google.com/?q=${latitude},${longitude}`);
+                    } catch {
+                      setLocationError("Não foi possível obter localização. Verifique as permissões do GPS.");
+                    } finally {
+                      setGettingLocation(false);
+                    }
+                  }}
+                  disabled={gettingLocation}
+                  className={`w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all border ${
+                    deliveryLocation
+                      ? "bg-[#00ff41]/10 border-[#00ff41]/30 text-[#00ff41]"
+                      : "bg-[#1f1f2e] border-[#2a2a3e] text-white hover:border-[#00f0ff]/40"
+                  }`}
+                >
+                  {gettingLocation ? (
+                    <><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-4 h-4 border-2 border-current border-t-transparent rounded-full" /> Obtendo localização...</>
+                  ) : deliveryLocation ? (
+                    <><Check className="w-4 h-4" /> Localização obtida</>
+                  ) : (
+                    <><MapPin className="w-4 h-4" /> Enviar minha localização</>
+                  )}
+                </motion.button>
+                {locationError && (
+                  <p className="text-[#ff006e] text-[11px] text-center">{locationError}</p>
+                )}
+                {deliveryLocation && (
+                  <p className="text-gray-500 text-[10px] text-center">
+                    📍 {deliveryLocation.lat.toFixed(5)}, {deliveryLocation.lng.toFixed(5)}
+                  </p>
+                )}
+
+                {/* Removed fee breakdown - only show total */}
+                {false && feePreview && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
                     className="bg-[#0a0a12] border border-[#1f1f2e]/50 rounded-xl p-3 space-y-1.5">
                     <p className="text-gray-500 text-[11px] uppercase tracking-wider font-medium mb-2">Distribuicao do Pagamento</p>
@@ -906,24 +961,7 @@ export function ClientePanel() {
                     <p className="text-gray-400 text-sm mt-1">Escaneie o QR Code ou copie o codigo PIX</p>
                   </div>
 
-                  {/* Fee breakdown in payment modal */}
-                  {feePreview && (
-                    <div className="bg-[#0a0a12]/80 border border-[#1f1f2e]/40 rounded-xl p-3 space-y-1.5">
-                      <p className="text-gray-500 text-[10px] uppercase tracking-wider font-medium">Distribuicao</p>
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-[#ff006e]/80">Admin ({feePreview.adminRate}% + R$0,99)</span>
-                        <span className="text-[#ff006e] font-medium">R$ {feePreview.adminTotal.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-[#ff9f00]/80">Motorista ({feePreview.driverPercent}% + R${feePreview.driverFixa.toFixed(2)})</span>
-                        <span className="text-[#ff9f00] font-medium">R$ {feePreview.driverTotal.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-[#00ff41]/80">Vendedor</span>
-                        <span className="text-[#00ff41] font-medium">R$ {feePreview.vendorProfit.toFixed(2)}</span>
-                      </div>
-                    </div>
-                  )}
+                  {/* Fee breakdown removed from client view - only visible in vendor/admin panels */}
                   {pixInvoice.payment?.qrCode && (
                     <button onClick={() => handleCopyPix(pixInvoice.payment.qrCode)}
                       className="w-full flex items-center gap-2 px-4 py-3 bg-[#1f1f2e] border border-[#2a2a3e] rounded-xl group">

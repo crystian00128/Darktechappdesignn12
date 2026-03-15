@@ -630,10 +630,18 @@ export function MotoristaPanel() {
   const [vendedorClients, setVendedorClients] = useState<any[]>([]);
   const [isChatConversationOpen, setIsChatConversationOpen] = useState(false);
   const [driverConfig, setDriverConfig] = useState<{ taxaFixa: number; taxaPercent: number }>({ taxaFixa: 5, taxaPercent: 8 });
+  const [earningsData, setEarningsData] = useState<any>(null);
+  const [earningsFilter, setEarningsFilter] = useState<number>(7);
+  const [loadingEarnings, setLoadingEarnings] = useState(false);
   const [deliveryChatOrder, setDeliveryChatOrder] = useState<any>(null);
   const [deliveryChatMsgs, setDeliveryChatMsgs] = useState<any[]>([]);
   const [deliveryChatInput, setDeliveryChatInput] = useState("");
   const [sendingLocation, setSendingLocation] = useState(false);
+  const [selectedOrderDetail, setSelectedOrderDetail] = useState<any>(null);
+  const [prevNewOrderCount, setPrevNewOrderCount] = useState(0);
+  const [newOrderPulse, setNewOrderPulse] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [showItemsPreview, setShowItemsPreview] = useState(false);
   const deliveryChatRef = useRef<HTMLDivElement>(null);
   const deliveryChatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -691,8 +699,33 @@ export function MotoristaPanel() {
     } catch (err) { console.error("Erro ao carregar metricas:", err); }
   }, [currentUser.username]);
 
+  const loadEarnings = useCallback(async () => {
+    setLoadingEarnings(true);
+    try {
+      const res = await api.getDriverEarnings(currentUser.username, earningsFilter);
+      if (res.success) setEarningsData(res.earnings);
+    } catch (err) { console.error("Erro ao carregar ganhos:", err); }
+    finally { setLoadingEarnings(false); }
+  }, [currentUser.username, earningsFilter]);
+
   useEffect(() => { loadOrders(); loadMetrics(); loadVendedorClients(); loadDriverConfig(); }, [loadOrders, loadMetrics, loadVendedorClients, loadDriverConfig]);
+  useEffect(() => { if (activeTab === "relatorios") loadEarnings(); }, [activeTab, loadEarnings]);
   useEffect(() => { const i = setInterval(() => { loadVendedorClients(); loadOrders(); }, 8000); return () => clearInterval(i); }, [loadVendedorClients, loadOrders]);
+
+  // ─── New order arrival detection with sound ───
+  useEffect(() => {
+    const currentNewCount = orders.filter((o) => ["accepted", "preparing", "delivering"].includes(o.status)).length;
+    if (currentNewCount > prevNewOrderCount && prevNewOrderCount >= 0 && isOnline) {
+      sfx.playNotification();
+      setNewOrderPulse(true);
+      setTimeout(() => setNewOrderPulse(false), 3000);
+      if (activeTab !== "entregas") {
+        setStatusToast("🔔 Novo pedido disponível para entrega!");
+        setTimeout(() => setStatusToast(null), 4000);
+      }
+    }
+    setPrevNewOrderCount(currentNewCount);
+  }, [orders, isOnline]);
 
   const handleToggleOnline = async () => {
     const newStatus = !isOnline;
@@ -738,13 +771,23 @@ export function MotoristaPanel() {
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
   };
 
+  const handleCollected = async (order: any) => {
+    try {
+      await api.updateOrderStatus(order.id, { status: "collected", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
+      sfx.playCollected();
+      notif.notifyOrderStatus("collected", order.id);
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "collected", collectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
+      if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder({ ...order, status: "collected", collectedAt: new Date().toISOString() });
+    } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
+  };
+
   const handleOnTheWay = async (order: any) => {
     try {
       await api.updateOrderStatus(order.id, { status: "on_the_way", vendorUsername: order.vendorUsername, clientUsername: order.clientUsername, driverUsername: currentUser.username });
       sfx.playSuccess();
       notif.notifyOrderStatus("on_the_way", order.id);
       setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "on_the_way", onTheWayAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
-      if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder({ ...order, status: "on_the_way" });
+      if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder({ ...order, status: "on_the_way", onTheWayAt: new Date().toISOString() });
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
   };
 
@@ -758,11 +801,14 @@ export function MotoristaPanel() {
         driverUsername: currentUser.username,
         driverCommission: { fixa: comm.fixa, perc: comm.perc, total: comm.total, orderTotal: order.total || 0 },
       });
-      sfx.playSuccess();
+      sfx.playDeliveryComplete();
       notif.notifyOrderStatus("delivered", order.id);
       setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: "delivered", deliveredAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
       loadMetrics();
       if (deliveryChatOrder?.id === order.id) setDeliveryChatOrder(null);
+      // Trigger celebration
+      setShowCelebration(true);
+      setTimeout(() => setShowCelebration(false), 3500);
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
   };
 
@@ -821,9 +867,14 @@ export function MotoristaPanel() {
 
   // Order categories
   const newOrders = orders.filter((o) => ["accepted", "preparing", "delivering"].includes(o.status));
-  const activeDeliveries = orders.filter((o) => ["driver_accepted", "on_the_way"].includes(o.status));
+  const activeDeliveries = orders.filter((o) => ["driver_accepted", "collected", "on_the_way"].includes(o.status));
   const completedDeliveries = orders.filter((o) => o.status === "delivered");
-  const totalEarned = completedDeliveries.reduce((sum, o) => sum + calcCommission(o.total || 0).total, 0);
+  const totalEarned = completedDeliveries.reduce((sum, o) => {
+    // Use stored actual commission if available (from backend), otherwise calculate
+    if (o.driverCommission?.total) return sum + o.driverCommission.total;
+    if (o.feeBreakdown?.driverTotal) return sum + o.feeBreakdown.driverTotal;
+    return sum + calcCommission(o.total || 0).total;
+  }, 0);
 
   // Delivery data for charts (last 7 days)
   const deliveryChartData = (() => {
@@ -834,7 +885,11 @@ export function MotoristaPanel() {
     });
     return last7.map((date) => {
       const dayOrders = completedDeliveries.filter((o: any) => (o.updatedAt || o.createdAt || "").startsWith(date));
-      const dayEarnings = dayOrders.reduce((sum: number, o: any) => sum + calcCommission(o.total || 0).total, 0);
+      const dayEarnings = dayOrders.reduce((sum: number, o: any) => {
+        if (o.driverCommission?.total) return sum + o.driverCommission.total;
+        if (o.feeBreakdown?.driverTotal) return sum + o.feeBreakdown.driverTotal;
+        return sum + calcCommission(o.total || 0).total;
+      }, 0);
       const dayLabel = new Date(date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short" }).slice(0, 3);
       return { name: dayLabel, entregas: dayOrders.length, ganhos: Math.round(dayEarnings * 100) / 100 };
     });
@@ -844,7 +899,7 @@ export function MotoristaPanel() {
     ? [{ username: vendedor.username, name: vendedor.name || "Vendedor", photo: vendedor.photo || "", role: "vendedor" }]
     : [];
   const activeClientUsernames = new Set(
-    orders.filter((o) => ["delivering", "driver_accepted", "on_the_way"].includes(o.status) && o.driverUsername === currentUser.username).map((o) => o.clientUsername)
+    orders.filter((o) => ["delivering", "driver_accepted", "collected", "on_the_way"].includes(o.status) && o.driverUsername === currentUser.username).map((o) => o.clientUsername)
   );
   const clienteChatContacts: ChatContact[] = vendedorClients
     .filter((c: any) => activeClientUsernames.has(c.username))
@@ -870,7 +925,7 @@ export function MotoristaPanel() {
   }, [currentUser.username, allChatContacts.length]);
 
   const tabs: { id: TabId; icon: React.ReactNode; label: string; badge?: number }[] = [
-    { id: "entregas", icon: <Truck className="w-5 h-5" />, label: "Entregas", badge: newOrders.length > 0 ? newOrders.length : undefined },
+    { id: "entregas", icon: <Truck className="w-5 h-5" />, label: "Entregas", badge: (newOrders.length + activeDeliveries.length) > 0 ? newOrders.length + activeDeliveries.length : undefined },
     { id: "chat", icon: <MessageSquare className="w-5 h-5" />, label: "Chat", badge: totalUnread > 0 ? totalUnread : undefined },
     { id: "relatorios", icon: <BarChart3 className="w-5 h-5" />, label: "Relatórios" },
   ];
@@ -1041,6 +1096,22 @@ export function MotoristaPanel() {
               {/* ── NEW ORDERS (Solicitacoes) ── */}
               {newOrders.length > 0 && (
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+                  {/* New order arrival flash */}
+                  <AnimatePresence>
+                    {newOrderPulse && (
+                      <motion.div initial={{ opacity: 0, scaleY: 0 }} animate={{ opacity: 1, scaleY: 1 }} exit={{ opacity: 0, scaleY: 0 }}
+                        className="mb-2 p-2.5 rounded-xl border border-[#ff9f00]/40 overflow-hidden relative">
+                        <motion.div className="absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(255,159,0,0.15), rgba(255,0,255,0.08))" }}
+                          animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 0.8, repeat: Infinity }} />
+                        <div className="relative flex items-center gap-2">
+                          <motion.div animate={{ rotate: [0, 15, -15, 0] }} transition={{ duration: 0.5, repeat: Infinity }}>
+                            <Bell className="w-5 h-5 text-[#ff9f00]" />
+                          </motion.div>
+                          <span className="text-[#ff9f00] font-bold text-xs">Nova entrega disponivel!</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   <div className="flex items-center gap-2 mb-2">
                     <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ duration: 1, repeat: Infinity }}>
                       <Bell className="w-4 h-4 text-[#ff9f00]" />
@@ -1137,9 +1208,15 @@ export function MotoristaPanel() {
                     {activeDeliveries.map((order) => {
                       const comm = calcCommission(order.total || 0);
                       const isAccepted = order.status === "driver_accepted";
+                      const isCollected = order.status === "collected";
                       const isOnWay = order.status === "on_the_way";
-                      const statusColor = isAccepted ? "#00f0ff" : "#ff00ff";
-                      const statusLabel = isAccepted ? "ACEITO" : "A CAMINHO";
+                      const statusColor = isAccepted ? "#00f0ff" : isCollected ? "#8b5cf6" : "#ff00ff";
+                      const statusLabel = isAccepted ? "ACEITO" : isCollected ? "COLETADO" : "A CAMINHO";
+                      // Elapsed timer
+                      const startTime = order.driverAcceptedAt || order.updatedAt || order.createdAt;
+                      const elapsedMs = startTime ? Date.now() - new Date(startTime).getTime() : 0;
+                      const elapsedMin = Math.floor(elapsedMs / 60000);
+                      const elapsedSec = Math.floor((elapsedMs % 60000) / 1000);
                       return (
                         <motion.div key={order.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
                           className="relative overflow-hidden bg-[#12121a]/90 border rounded-2xl shadow-[0_0_15px_rgba(255,0,255,0.08)]"
@@ -1151,18 +1228,21 @@ export function MotoristaPanel() {
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
                                 <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${statusColor}15` }}>
-                                  {isOnWay ? <Navigation className="w-4 h-4" style={{ color: statusColor }} /> : <Truck className="w-4 h-4" style={{ color: statusColor }} />}
+                                  {isOnWay ? <Navigation className="w-4 h-4" style={{ color: statusColor }} /> : isCollected ? <Package className="w-4 h-4" style={{ color: statusColor }} /> : <Truck className="w-4 h-4" style={{ color: statusColor }} />}
                                 </div>
                                 <div>
                                   <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
                                   <p className="text-gray-400 text-[10px]">@{order.clientUsername}</p>
                                 </div>
                               </div>
-                              <motion.span animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
-                                className="px-2.5 py-1 rounded-full font-bold text-[10px] flex items-center gap-1"
-                                style={{ background: `${statusColor}20`, color: statusColor }}>
-                                {isOnWay ? <Navigation className="w-3 h-3" /> : <Check className="w-3 h-3" />} {statusLabel}
-                              </motion.span>
+                              <div className="flex flex-col items-end gap-1">
+                                <motion.span animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 1.5, repeat: Infinity }}
+                                  className="px-2.5 py-1 rounded-full font-bold text-[10px] flex items-center gap-1"
+                                  style={{ background: `${statusColor}20`, color: statusColor }}>
+                                  {isOnWay ? <Navigation className="w-3 h-3" /> : isCollected ? <Package className="w-3 h-3" /> : <Check className="w-3 h-3" />} {statusLabel}
+                                </motion.span>
+                                <span className="text-gray-500 text-[9px] font-mono">{String(elapsedMin).padStart(2, "0")}:{String(elapsedSec).padStart(2, "0")}</span>
+                              </div>
                             </div>
                             {order.deliveryAddress && (
                               <div className="flex items-start gap-1.5 mb-2.5 px-1">
@@ -1179,6 +1259,21 @@ export function MotoristaPanel() {
                               ))}
                               {(order.items?.length || 0) > 3 && <p className="text-gray-500 text-[10px]">+{order.items.length - 3} itens</p>}
                             </div>
+                            {/* 4-Stage Progress Bar */}
+                            <div className="flex items-center gap-0.5 mb-2.5">
+                              {[
+                                { label: "Aceito", done: true, color: "#00f0ff" },
+                                { label: "Coletado", done: ["collected", "on_the_way"].includes(order.status), color: "#8b5cf6" },
+                                { label: "A Caminho", done: order.status === "on_the_way", color: "#ff00ff" },
+                                { label: "Entregue", done: false, color: "#00ff41" },
+                              ].map((step, si) => (
+                                <div key={si} className="flex-1 flex flex-col items-center gap-0.5">
+                                  <div className={`w-full h-1 rounded-full ${step.done ? "" : "bg-[#1f1f2e]"}`}
+                                    style={step.done ? { backgroundColor: step.color, boxShadow: `0 0 6px ${step.color}40` } : {}} />
+                                  <span className={`text-[7px] font-medium ${step.done ? "text-white" : "text-gray-600"}`}>{step.label}</span>
+                                </div>
+                              ))}
+                            </div>
                             {/* Commission */}
                             <div className="bg-[#00ff41]/5 border border-[#00ff41]/15 rounded-xl p-2.5 mb-3">
                               <div className="flex items-center justify-between">
@@ -1191,15 +1286,23 @@ export function MotoristaPanel() {
                               {/* Chat with Client Button */}
                               <motion.button whileTap={{ scale: 0.95 }} onClick={() => setDeliveryChatOrder(order)}
                                 className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 bg-[#8b5cf6]/15 text-[#8b5cf6] border border-[#8b5cf6]/25 hover:bg-[#8b5cf6]/25 transition-colors">
-                                <MessageCircle className="w-3.5 h-3.5" /> Chat Cliente
+                                <MessageCircle className="w-3.5 h-3.5" /> Chat
                               </motion.button>
 
-                              {/* Estou a Caminho / Pedido Entregue */}
+                              {/* Coletei o Pedido (after accepting) */}
                               {isAccepted && (
+                                <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleCollected(order)}
+                                  className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
+                                  style={{ background: "linear-gradient(135deg, #8b5cf6, #00f0ff)", boxShadow: "0 0 20px rgba(139,92,246,0.3)" }}>
+                                  <Package className="w-3.5 h-3.5" /> Coletei
+                                </motion.button>
+                              )}
+                              {/* Estou a Caminho (after collecting) */}
+                              {isCollected && (
                                 <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleOnTheWay(order)}
                                   className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
                                   style={{ background: "linear-gradient(135deg, #ff00ff, #8b5cf6)", boxShadow: "0 0 20px rgba(255,0,255,0.3)" }}>
-                                  <Navigation className="w-3.5 h-3.5" /> Estou a Caminho
+                                  <Navigation className="w-3.5 h-3.5" /> A Caminho
                                 </motion.button>
                               )}
                               {isOnWay && (
@@ -1228,9 +1331,14 @@ export function MotoristaPanel() {
                   </div>
                   <div className="space-y-1.5">
                     {[...completedDeliveries].reverse().slice(0, 6).map((order) => {
-                      const comm = calcCommission(order.total || 0);
+                      const realComm = order.driverCommission?.total || order.feeBreakdown?.driverTotal || null;
+                      const comm = realComm !== null
+                        ? { fixa: order.driverCommission?.fixa || 0, perc: order.driverCommission?.perc || 0, total: realComm }
+                        : calcCommission(order.total || 0);
                       return (
-                        <div key={order.id} className="bg-[#12121a]/80 border border-[#1f1f2e] rounded-xl p-2.5 flex items-center gap-3">
+                        <motion.button key={order.id} whileTap={{ scale: 0.97 }}
+                          onClick={() => setSelectedOrderDetail(order)}
+                          className="w-full text-left bg-[#12121a]/80 border border-[#1f1f2e] rounded-xl p-2.5 flex items-center gap-3 hover:border-[#00ff41]/30 transition-colors">
                           <div className="w-8 h-8 rounded-lg bg-[#00ff41]/10 flex items-center justify-center shrink-0">
                             <Check className="w-4 h-4 text-[#00ff41]" />
                           </div>
@@ -1240,9 +1348,10 @@ export function MotoristaPanel() {
                           </div>
                           <div className="text-right shrink-0">
                             <p className="text-[#00ff41] font-bold text-xs">+R$ {comm.total.toFixed(2)}</p>
-                            <p className="text-gray-600 text-[9px]">R${comm.fixa.toFixed(0)} + {driverConfig.taxaPercent}%</p>
+                            <p className="text-gray-600 text-[9px]">R${comm.fixa.toFixed(2)} + R${(comm.total - comm.fixa).toFixed(2)}</p>
                           </div>
-                        </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-gray-600 shrink-0" />
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -1287,24 +1396,74 @@ export function MotoristaPanel() {
           {activeTab === "relatorios" && (
             <motion.div key="relatorios" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto overscroll-contain px-4 py-3 space-y-3">
 
+              {/* ── Date Filter Bar ── */}
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-2.5">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Calendar className="w-3.5 h-3.5 text-[#ff00ff]" />
+                  <span className="text-gray-400 text-[10px] uppercase tracking-wider font-medium">Período</span>
+                </div>
+                <div className="flex gap-1.5">
+                  {[
+                    { label: "Hoje", value: 1 },
+                    { label: "7 dias", value: 7 },
+                    { label: "30 dias", value: 30 },
+                    { label: "Este mês", value: new Date().getDate() },
+                  ].map((f) => {
+                    const isActive = earningsFilter === f.value;
+                    return (
+                      <motion.button key={f.label} whileTap={{ scale: 0.92 }}
+                        onClick={() => setEarningsFilter(f.value)}
+                        className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${
+                          isActive
+                            ? "text-white shadow-[0_0_12px_rgba(255,0,255,0.3)]"
+                            : "bg-[#0a0a0f] text-gray-500 border border-[#1f1f2e]/60 hover:text-gray-300"
+                        }`}
+                        style={isActive ? { background: "linear-gradient(135deg, #ff00ff30, #8b5cf620)", border: "1px solid rgba(255,0,255,0.4)" } : undefined}
+                      >
+                        {f.label}
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+
               {/* Summary Cards */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                   className="bg-[#12121a]/90 border border-[#00ff41]/20 rounded-xl p-3 text-center">
-                  <DollarSign className="w-5 h-5 text-[#00ff41] mx-auto mb-1" />
-                  <p className="text-[#00ff41] font-bold text-xl">R$ {totalEarned.toFixed(2)}</p>
-                  <p className="text-gray-500 text-[10px] uppercase">Total Ganho</p>
+                  <DollarSign className="w-4 h-4 text-[#00ff41] mx-auto mb-1" />
+                  <p className="text-[#00ff41] font-bold text-lg">R$ {(earningsData?.totals?.earnings ?? totalEarned).toFixed(2)}</p>
+                  <p className="text-gray-500 text-[9px] uppercase">Total Ganho</p>
                 </motion.div>
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
                   className="bg-[#12121a]/90 border border-[#00f0ff]/20 rounded-xl p-3 text-center">
-                  <Package className="w-5 h-5 text-[#00f0ff] mx-auto mb-1" />
-                  <p className="text-[#00f0ff] font-bold text-xl">{completedDeliveries.length}</p>
-                  <p className="text-gray-500 text-[10px] uppercase">Entregas Feitas</p>
+                  <Package className="w-4 h-4 text-[#00f0ff] mx-auto mb-1" />
+                  <p className="text-[#00f0ff] font-bold text-lg">{earningsData?.totals?.deliveries ?? completedDeliveries.length}</p>
+                  <p className="text-gray-500 text-[9px] uppercase">Entregas</p>
+                </motion.div>
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+                  className="bg-[#12121a]/90 border border-[#ff00ff]/20 rounded-xl p-3 text-center">
+                  <Star className="w-4 h-4 text-[#ff00ff] mx-auto mb-1" />
+                  <p className="text-[#ff00ff] font-bold text-lg">R$ {(earningsData?.totals?.avgPerDelivery ?? 0).toFixed(2)}</p>
+                  <p className="text-gray-500 text-[9px] uppercase">Média/Entrega</p>
                 </motion.div>
               </div>
 
-              {/* Recharts-based delivery charts */}
-              <MotoristaDashboardCharts deliveryData={deliveryChartData} metrics={metrics} />
+              {/* Loading indicator */}
+              {loadingEarnings && (
+                <div className="flex items-center justify-center py-2 gap-2">
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-4 h-4 border-2 border-[#ff00ff]/30 border-t-[#ff00ff] rounded-full" />
+                  <span className="text-gray-500 text-xs">Carregando dados...</span>
+                </div>
+              )}
+
+              {/* Recharts-based delivery charts with filtered data */}
+              <MotoristaDashboardCharts
+                deliveryData={earningsData?.dailyData?.map((d: any) => ({ name: d.label, entregas: d.entregas, ganhos: d.ganhos })) || deliveryChartData}
+                metrics={metrics}
+              />
 
               {/* Commission Config Display */}
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
@@ -1322,20 +1481,21 @@ export function MotoristaPanel() {
                     </div>
                   </div>
                 )}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between p-2.5 bg-[#0a0a0f] rounded-lg border border-[#1f1f2e]/60">
-                    <div className="flex items-center gap-2">
-                      <Banknote className="w-4 h-4 text-[#00ff41]" />
-                      <span className="text-gray-300 text-xs">Taxa Fixa por Entrega</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-[#0a0a0f] rounded-lg p-2.5 border border-[#1f1f2e]/60 text-center">
+                    <div className="flex items-center justify-center gap-1 mb-0.5">
+                      <Banknote className="w-3 h-3 text-[#00ff41]" />
+                      <span className="text-[#00ff41] font-bold text-sm">R$ {driverConfig.taxaFixa.toFixed(2)}</span>
                     </div>
-                    <span className="text-[#00ff41] font-bold text-sm">R$ {driverConfig.taxaFixa.toFixed(2)}</span>
+                    <p className="text-gray-500 text-[9px] uppercase">Fixa</p>
                   </div>
-                  <div className="flex items-center justify-between p-2.5 bg-[#0a0a0f] rounded-lg border border-[#1f1f2e]/60">
-                    <div className="flex items-center gap-2">
-                      <Percent className="w-4 h-4 text-[#00f0ff]" />
-                      <span className="text-gray-300 text-xs">Percentual da Venda</span>
+                  <span className="text-gray-600 text-sm">+</span>
+                  <div className="flex-1 bg-[#0a0a0f] rounded-lg p-2.5 border border-[#1f1f2e]/60 text-center">
+                    <div className="flex items-center justify-center gap-1 mb-0.5">
+                      <Percent className="w-3 h-3 text-[#00f0ff]" />
+                      <span className="text-[#00f0ff] font-bold text-sm">{driverConfig.taxaPercent}%</span>
                     </div>
-                    <span className="text-[#00f0ff] font-bold text-sm">{driverConfig.taxaPercent}%</span>
+                    <p className="text-gray-500 text-[9px] uppercase">%Venda</p>
                   </div>
                 </div>
                 <div className="mt-2.5 p-2.5 bg-[#ff00ff]/5 border border-[#ff00ff]/15 rounded-lg">
@@ -1344,42 +1504,58 @@ export function MotoristaPanel() {
                 </div>
               </motion.div>
 
-              {/* Delivery History */}
+              {/* Delivery History from API */}
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
                 className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-3">
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar className="w-4 h-4 text-[#ff00ff]" />
                   <h3 className="text-white font-bold text-xs">Historico de Comissoes</h3>
+                  {earningsData?.history && (
+                    <span className="ml-auto text-[#00ff41] text-[10px] font-bold">{earningsData.history.length} entregas</span>
+                  )}
                 </div>
-                {completedDeliveries.length > 0 ? (
-                  <div className="space-y-2">
-                    {[...completedDeliveries].reverse().map((order) => {
-                      const comm = calcCommission(order.total || 0);
+                {(earningsData?.history || completedDeliveries).length > 0 ? (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {(earningsData?.history || [...completedDeliveries].reverse()).map((item: any, idx: number) => {
+                      const comm = item.commission !== undefined
+                        ? { fixa: item.taxaFixa || 0, perc: item.taxaPercent || 0, total: item.commission }
+                        : calcCommission(item.total || 0);
+                      const orderId = item.orderId || item.id || "";
+                      const orderTotal = item.total || 0;
+                      const dateStr = item.deliveredAt || item.updatedAt || item.createdAt || "";
+                      // Try to find the full order for detail view
+                      const fullOrder = completedDeliveries.find((o: any) => o.id === orderId);
                       return (
-                        <div key={order.id} className="p-2.5 bg-[#0a0a0f]/60 rounded-lg border border-[#1f1f2e]/40">
+                        <motion.button key={`${orderId}-${idx}`} whileTap={{ scale: 0.97 }}
+                          onClick={() => { if (fullOrder) setSelectedOrderDetail(fullOrder); }}
+                          className="w-full text-left p-2.5 bg-[#0a0a0f]/60 rounded-lg border border-[#1f1f2e]/40 hover:border-[#00ff41]/20 transition-colors">
                           <div className="flex items-center justify-between mb-1.5">
                             <div className="flex items-center gap-2">
                               <div className="w-6 h-6 rounded bg-[#00ff41]/10 flex items-center justify-center">
                                 <Check className="w-3 h-3 text-[#00ff41]" />
                               </div>
-                              <p className="text-white font-semibold text-xs">#{order.id.slice(-6).toUpperCase()}</p>
+                              <div>
+                                <p className="text-white font-semibold text-xs">#{orderId.slice(-6).toUpperCase()}</p>
+                                {item.clientUsername && <p className="text-gray-600 text-[9px]">@{item.clientUsername}</p>}
+                              </div>
                             </div>
                             <p className="text-[#00ff41] font-bold text-sm">+R$ {comm.total.toFixed(2)}</p>
                           </div>
                           <div className="flex items-center justify-between pl-8">
-                            <p className="text-gray-500 text-[10px]">{new Date(order.updatedAt || order.createdAt).toLocaleString("pt-BR")}</p>
+                            <p className="text-gray-500 text-[10px]">{dateStr ? new Date(dateStr).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-"}</p>
                             <div className="flex gap-2 text-[10px]">
-                              <span className="text-gray-400">Fixa <span className="text-[#00ff41]">R${comm.fixa.toFixed(2)}</span></span>
-                              <span className="text-gray-400">{driverConfig.taxaPercent}% <span className="text-[#00f0ff]">R${comm.perc.toFixed(2)}</span></span>
+                              <span className="text-gray-400">R$<span className="text-[#00ff41]">{comm.fixa.toFixed(2)}</span></span>
+                              <span className="text-gray-600">+</span>
+                              <span className="text-gray-400"><span className="text-[#00f0ff]">R${(comm.total - comm.fixa).toFixed(2)}</span></span>
                             </div>
                           </div>
                           <div className="mt-1.5 pl-8">
                             <div className="w-full bg-[#1f1f2e] rounded-full h-1">
-                              <div className="bg-gradient-to-r from-[#00ff41] to-[#00f0ff] h-1 rounded-full" style={{ width: `${Math.min(100, (comm.total / (order.total || 1)) * 100)}%` }} />
+                              <div className="bg-gradient-to-r from-[#00ff41] to-[#00f0ff] h-1 rounded-full" style={{ width: `${Math.min(100, orderTotal > 0 ? (comm.total / orderTotal) * 100 : 50)}%` }} />
                             </div>
-                            <p className="text-gray-600 text-[9px] mt-0.5">Pedido: R$ {(order.total || 0).toFixed(2)}</p>
+                            <p className="text-gray-600 text-[9px] mt-0.5">Pedido: R$ {orderTotal.toFixed(2)}</p>
                           </div>
-                        </div>
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -1413,7 +1589,7 @@ export function MotoristaPanel() {
                   className={`flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-xl transition-all relative min-w-[52px] ${active ? "text-[#ff00ff]" : "text-gray-500"}`}
                 >
                   {active && (
-                    <motion.div layoutId="motorista-tab-glow" className="absolute inset-0 bg-[#ff00ff]/10 rounded-xl" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+                    <motion.div layoutId="motorista-tab-glow" className="absolute inset-0 rounded-xl" style={{ backgroundColor: "rgba(255,0,255,0.1)" }} transition={{ type: "spring", stiffness: 400, damping: 30 }} />
                   )}
                   <div className="relative z-10">
                     {tab.icon}
@@ -1426,7 +1602,7 @@ export function MotoristaPanel() {
                   </div>
                   <span className="relative z-10 text-[9px] font-semibold">{tab.label}</span>
                   {active && (
-                    <motion.div layoutId="motorista-tab-dot" className="absolute -top-0.5 w-1 h-1 rounded-full bg-[#ff00ff] shadow-[0_0_6px_rgba(255,0,255,0.6)]" />
+                    <motion.div layoutId="motorista-tab-dot" className="absolute -top-0.5 w-1 h-1 rounded-full" style={{ backgroundColor: "#ff00ff", boxShadow: "0 0 6px rgba(255,0,255,0.6)" }} />
                   )}
                 </motion.button>
               );
@@ -1434,6 +1610,184 @@ export function MotoristaPanel() {
           </div>
         </div>
       )}
+
+      {/* ── Order Detail Modal ── */}
+      <AnimatePresence>
+        {selectedOrderDetail && (() => {
+          const order = selectedOrderDetail;
+          const realComm = order.driverCommission?.total || order.feeBreakdown?.driverTotal || null;
+          const comm = realComm !== null
+            ? { fixa: order.driverCommission?.fixa || 0, perc: order.driverCommission?.perc || 0, total: realComm }
+            : calcCommission(order.total || 0);
+          const statusColors: Record<string, string> = { delivered: "#00ff41", driver_accepted: "#00f0ff", collected: "#8b5cf6", on_the_way: "#ff00ff", accepted: "#ff9f00", preparing: "#ff9f00" };
+          const statusLabels: Record<string, string> = { delivered: "Entregue", driver_accepted: "Aceito", collected: "Coletado", on_the_way: "A Caminho", accepted: "Novo", preparing: "Preparando" };
+          const sc = statusColors[order.status] || "#8b5cf6";
+          const sl = statusLabels[order.status] || order.status;
+          return (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-md px-4 pb-4"
+              onClick={() => setSelectedOrderDetail(null)}>
+              <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 350 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-md relative">
+                <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
+                  style={{ background: `conic-gradient(from 0deg, ${sc}30, transparent, ${sc}15, transparent)` }}
+                  animate={{ rotate: [0, 360] }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }} />
+                <div className="relative bg-[#0c0c14] rounded-2xl m-[1px] overflow-hidden max-h-[85vh] overflow-y-auto">
+                  {/* Header */}
+                  <div className="sticky top-0 z-10 bg-[#0c0c14]/95 backdrop-blur-xl border-b border-[#1f1f2e]/60 px-5 py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${sc}15`, border: `1px solid ${sc}30` }}>
+                          <Package className="w-5 h-5" style={{ color: sc }} />
+                        </div>
+                        <div>
+                          <h3 className="text-white font-bold text-base">#{order.id.slice(-6).toUpperCase()}</h3>
+                          <p className="text-gray-500 text-[10px]">{order.createdAt ? new Date(order.createdAt).toLocaleString("pt-BR") : "-"}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold" style={{ background: `${sc}20`, color: sc }}>{sl}</span>
+                        <motion.button whileTap={{ scale: 0.9 }} onClick={() => setSelectedOrderDetail(null)}
+                          className="p-1.5 rounded-xl bg-[#1f1f2e] text-gray-400 hover:text-white transition-colors">
+                          <X className="w-4 h-4" />
+                        </motion.button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-5 py-4 space-y-4">
+                    {/* Timeline */}
+                    <div className="space-y-0">
+                      {[
+                        { label: "Pedido Criado", time: order.createdAt, color: "#ff9f00", done: true },
+                        { label: "Aceito pelo Motorista", time: order.driverAcceptedAt, color: "#00f0ff", done: !!order.driverAcceptedAt },
+                        { label: "Coletado do Vendedor", time: order.collectedAt, color: "#8b5cf6", done: !!order.collectedAt },
+                        { label: "A Caminho", time: order.onTheWayAt, color: "#ff00ff", done: !!order.onTheWayAt },
+                        { label: "Entregue", time: order.deliveredAt, color: "#00ff41", done: !!order.deliveredAt },
+                      ].map((step, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <div className="flex flex-col items-center">
+                            <div className={`w-3 h-3 rounded-full border-2 ${step.done ? "" : "border-gray-700 bg-transparent"}`}
+                              style={step.done ? { backgroundColor: step.color, borderColor: step.color, boxShadow: `0 0 8px ${step.color}60` } : {}} />
+                            {i < 4 && <div className={`w-[2px] h-6 ${step.done ? "" : "bg-gray-800"}`} style={step.done ? { backgroundColor: `${step.color}40` } : {}} />}
+                          </div>
+                          <div className="pb-2">
+                            <p className={`text-xs font-medium ${step.done ? "text-white" : "text-gray-600"}`}>{step.label}</p>
+                            {step.time && <p className="text-gray-500 text-[10px]">{new Date(step.time).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Client & Vendor info */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-[#0a0a0f] rounded-xl p-3 border border-[#1f1f2e]/60">
+                        <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-1">Cliente</p>
+                        <p className="text-white font-semibold text-xs truncate">@{order.clientUsername}</p>
+                      </div>
+                      <div className="bg-[#0a0a0f] rounded-xl p-3 border border-[#1f1f2e]/60">
+                        <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-1">Vendedor</p>
+                        <p className="text-white font-semibold text-xs truncate">@{order.vendorUsername}</p>
+                      </div>
+                    </div>
+
+                    {/* Delivery Address */}
+                    {order.deliveryAddress && (
+                      <div className="bg-[#0a0a0f] rounded-xl p-3 border border-[#1f1f2e]/60">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <MapPin className="w-3 h-3 text-[#ff00ff]" />
+                          <p className="text-gray-500 text-[9px] uppercase tracking-wider">Endereco de Entrega</p>
+                        </div>
+                        <p className="text-gray-200 text-xs leading-relaxed">{order.deliveryAddress}</p>
+                      </div>
+                    )}
+
+                    {/* Order Items */}
+                    <div className="bg-[#0a0a0f] rounded-xl p-3 border border-[#1f1f2e]/60">
+                      <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-2">Itens do Pedido</p>
+                      <div className="space-y-1.5">
+                        {(order.items || []).map((item: any, i: number) => (
+                          <div key={i} className="flex justify-between text-xs">
+                            <span className="text-gray-300">{item.name} <span className="text-gray-600">x{item.qty || 1}</span></span>
+                            <span className="text-white font-medium">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="border-t border-[#1f1f2e]/60 pt-1.5 mt-1.5 flex justify-between">
+                          <span className="text-gray-400 text-xs font-medium">Total</span>
+                          <span className="text-white font-bold text-sm">R$ {(order.total || 0).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Commission Breakdown */}
+                    <div className="rounded-xl overflow-hidden">
+                      <div className="bg-gradient-to-r from-[#00ff41]/10 to-[#00f0ff]/5 border border-[#00ff41]/20 rounded-xl p-4">
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-3 font-medium flex items-center gap-1.5">
+                          <Wallet className="w-3 h-3 text-[#00ff41]" /> Sua Comissao neste Pedido
+                        </p>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400 text-xs">Taxa Fixa</span>
+                            <span className="text-white font-medium text-xs">R$ {comm.fixa.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400 text-xs">Taxa Percentual</span>
+                            <span className="text-white font-medium text-xs">R$ {(comm.total - comm.fixa).toFixed(2)}</span>
+                          </div>
+                          <div className="border-t border-[#00ff41]/20 pt-2 flex justify-between items-center">
+                            <span className="text-[#00ff41] font-bold text-xs">Total Comissao</span>
+                            <motion.span animate={{ textShadow: ["0 0 6px rgba(0,255,65,0.3)", "0 0 12px rgba(0,255,65,0.6)", "0 0 6px rgba(0,255,65,0.3)"] }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                              className="text-[#00ff41] font-bold text-lg">R$ {comm.total.toFixed(2)}</motion.span>
+                          </div>
+                        </div>
+                        {/* Visual progress */}
+                        <div className="mt-3">
+                          <div className="w-full bg-[#1f1f2e] rounded-full h-1.5">
+                            <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, (order.total || 0) > 0 ? (comm.total / (order.total || 1)) * 100 : 50)}%` }}
+                              transition={{ duration: 1, delay: 0.3 }}
+                              className="bg-gradient-to-r from-[#00ff41] to-[#00f0ff] h-1.5 rounded-full" />
+                          </div>
+                          <p className="text-gray-600 text-[9px] mt-1">{((comm.total / (order.total || 1)) * 100).toFixed(1)}% do valor do pedido</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fee Breakdown from order if available */}
+                    {order.feeBreakdown && (
+                      <div className="bg-[#0a0a0f] rounded-xl p-3 border border-[#1f1f2e]/60">
+                        <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-2">Divisao de Taxas</p>
+                        <div className="space-y-1.5 text-xs">
+                          {order.feeBreakdown.adminFee !== undefined && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Admin ({order.feeBreakdown.adminRate || 0}% + R$0,99)</span>
+                              <span className="text-[#ff9f00] font-medium">R$ {(order.feeBreakdown.adminFee || 0).toFixed(2)}</span>
+                            </div>
+                          )}
+                          {order.feeBreakdown.driverTotal !== undefined && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Motorista</span>
+                              <span className="text-[#00ff41] font-medium">R$ {(order.feeBreakdown.driverTotal || 0).toFixed(2)}</span>
+                            </div>
+                          )}
+                          {order.feeBreakdown.vendorNet !== undefined && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Vendedor (liquido)</span>
+                              <span className="text-[#00f0ff] font-medium">R$ {(order.feeBreakdown.vendorNet || 0).toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
 
       {/* ── Logout Confirmation Modal ── */}
       <AnimatePresence>
@@ -1522,12 +1876,10 @@ export function MotoristaPanel() {
                   className="p-1.5 rounded-xl hover:bg-[#1f1f2e] text-gray-400 transition-colors shrink-0">
                   <ChevronLeft className="w-5 h-5" />
                 </motion.button>
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#00f0ff]/20 to-[#8b5cf6]/15 flex items-center justify-center">
-                  <span className="text-white font-bold text-xs">{(deliveryChatOrder.clientUsername || "?").charAt(0).toUpperCase()}</span>
-                </div>
+                <NeonAvatar photo={(() => { const c = vendedorClients.find((cl: any) => cl.username === deliveryChatOrder.clientUsername); return c?.photo; })()} name={(() => { const c = vendedorClients.find((cl: any) => cl.username === deliveryChatOrder.clientUsername); return c?.name || deliveryChatOrder.clientUsername; })()} size="sm" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm truncate">@{deliveryChatOrder.clientUsername}</p>
-                  <p className="text-gray-500 text-[10px]">Pedido #{deliveryChatOrder.id?.slice(-6).toUpperCase()} - Chat de Entrega</p>
+                  <p className="text-white font-bold text-sm truncate">{(() => { const c = vendedorClients.find((cl: any) => cl.username === deliveryChatOrder.clientUsername); return c?.name || `@${deliveryChatOrder.clientUsername}`; })()}</p>
+                  <p className="text-gray-500 text-[10px]">Pedido #{deliveryChatOrder.id?.slice(-6).toUpperCase()}</p>
                 </div>
                 {/* Action Badge */}
                 <motion.span
@@ -1535,17 +1887,44 @@ export function MotoristaPanel() {
                   transition={{ duration: 2, repeat: Infinity }}
                   className="px-2 py-1 rounded-full text-[9px] font-bold"
                   style={{
-                    background: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff20" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff20" : "#00ff4120",
-                    color: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff" : "#00ff41",
+                    background: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff20" : deliveryChatOrder.status === "collected" ? "#8b5cf620" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff20" : "#00ff4120",
+                    color: deliveryChatOrder.status === "driver_accepted" ? "#00f0ff" : deliveryChatOrder.status === "collected" ? "#8b5cf6" : deliveryChatOrder.status === "on_the_way" ? "#ff00ff" : "#00ff41",
                   }}
                 >
-                  {deliveryChatOrder.status === "driver_accepted" ? "ACEITO" : deliveryChatOrder.status === "on_the_way" ? "A CAMINHO" : "ENTREGUE"}
+                  {deliveryChatOrder.status === "driver_accepted" ? "ACEITO" : deliveryChatOrder.status === "collected" ? "COLETADO" : deliveryChatOrder.status === "on_the_way" ? "A CAMINHO" : "ENTREGUE"}
                 </motion.span>
               </div>
 
+              {/* 4-Stage Delivery Progress Bar */}
+              <div className="flex items-center gap-0.5 mt-2.5 mb-1">
+                {[
+                  { label: "Aceito", done: ["driver_accepted", "collected", "on_the_way", "delivered"].includes(deliveryChatOrder.status), color: "#00f0ff" },
+                  { label: "Coletado", done: ["collected", "on_the_way", "delivered"].includes(deliveryChatOrder.status), color: "#8b5cf6" },
+                  { label: "A Caminho", done: ["on_the_way", "delivered"].includes(deliveryChatOrder.status), color: "#ff00ff" },
+                  { label: "Entregue", done: deliveryChatOrder.status === "delivered", color: "#00ff41" },
+                ].map((step, i) => (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                    <div className="w-full h-1.5 rounded-full overflow-hidden bg-[#1f1f2e]">
+                      {step.done ? (
+                        <motion.div initial={{ width: 0 }} animate={{ width: "100%" }} transition={{ duration: 0.5, delay: i * 0.12 }}
+                          className="h-full rounded-full" style={{ backgroundColor: step.color, boxShadow: `0 0 8px ${step.color}60` }} />
+                      ) : null}
+                    </div>
+                    <span className={`text-[7px] font-semibold ${step.done ? "text-white" : "text-gray-600"}`}>{step.label}</span>
+                  </div>
+                ))}
+              </div>
+
               {/* Action Bar */}
-              <div className="flex gap-2 mt-2.5">
+              <div className="flex gap-2 mt-1.5">
                 {deliveryChatOrder.status === "driver_accepted" && (
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleCollected(deliveryChatOrder)}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
+                    style={{ background: "linear-gradient(135deg, #8b5cf6, #00f0ff)", boxShadow: "0 0 15px rgba(139,92,246,0.25)" }}>
+                    <Package className="w-3.5 h-3.5" /> Coletei o Pedido
+                  </motion.button>
+                )}
+                {deliveryChatOrder.status === "collected" && (
                   <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleOnTheWay(deliveryChatOrder)}
                     className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 text-white"
                     style={{ background: "linear-gradient(135deg, #ff00ff, #8b5cf6)", boxShadow: "0 0 15px rgba(255,0,255,0.25)" }}>
@@ -1572,6 +1951,21 @@ export function MotoristaPanel() {
                 </motion.button>
               </div>
             </div>
+
+            {/* Delivery Address Quick View */}
+            {deliveryChatOrder.deliveryAddress && (
+              <div className="shrink-0 mx-4 mt-2 p-2.5 bg-[#12121a]/80 rounded-xl border border-[#ff00ff]/15 flex items-start gap-2">
+                <MapPin className="w-3.5 h-3.5 text-[#ff00ff] shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-gray-400 text-[9px] uppercase tracking-wider">Endereco</p>
+                  <p className="text-gray-200 text-[11px] leading-tight">{deliveryChatOrder.deliveryAddress}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-gray-400 text-[9px] uppercase tracking-wider">Comissao</p>
+                  <p className="text-[#00ff41] font-bold text-xs">R$ {calcCommission(deliveryChatOrder.total || 0).total.toFixed(2)}</p>
+                </div>
+              </div>
+            )}
 
             {/* Messages */}
             <div ref={deliveryChatRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2">

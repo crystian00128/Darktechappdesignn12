@@ -1433,13 +1433,14 @@ export function VendedorPanel() {
   }, [orders, dateFilterStart, dateFilterEnd]);
 
   const filteredTotalSales = useMemo(() => filteredOrders.reduce((s: number, o: any) => s + (o.total || 0), 0), [filteredOrders]);
-  // Admin tax: percentage + R$0.99 fixed fee per order (for client purchases with feeBreakdown, use stored values)
+  // Admin tax: percentage of total + R$0.99 fixed fee PER ORDER
+  // Example: R$10 total at 10% = R$1.00 + R$0.99 = R$1.99
   const filteredAdminTax = useMemo(() => {
     return filteredOrders.reduce((sum: number, o: any) => {
       if (o.feeBreakdown?.adminTotal) return sum + o.feeBreakdown.adminTotal;
-      // Fallback: percentage only + R$0.99 fixed fee for orders with paymentSource=client
+      // Correct calculation: rate% of total + R$0.99 fixed fee for every order
       const percTax = (o.total || 0) * (adminCommissionRate / 100);
-      const fixedFee = o.paymentSource === "client" ? 0.99 : 0;
+      const fixedFee = 0.99;
       return sum + parseFloat((percTax + fixedFee).toFixed(2));
     }, 0);
   }, [filteredOrders, adminCommissionRate]);
@@ -1775,7 +1776,7 @@ export function VendedorPanel() {
                           <div className="space-y-1.5 max-h-[350px] overflow-y-auto">
                             {filteredOrders.map((order: any) => {
                               const orderTotal = order.total || 0;
-                              const orderAdminTax = parseFloat((orderTotal * (adminCommissionRate / 100)).toFixed(2));
+                              const orderAdminTax = order.feeBreakdown?.adminTotal || parseFloat((orderTotal * (adminCommissionRate / 100) + 0.99).toFixed(2));
                               const orderDriverTax = calcDriverCommissionForOrder(order);
                               const orderProfit = parseFloat((orderTotal - orderAdminTax - orderDriverTax).toFixed(2));
                               const dateStr = order.createdAt ? new Date(order.createdAt).toLocaleDateString("pt-BR") : "—";
@@ -1859,6 +1860,8 @@ export function VendedorPanel() {
                 driverTax={filteredDriverTax}
                 sellerProfit={filteredSellerProfit}
                 adminCommissionRate={adminCommissionRate}
+                directPixTotal={metrics.directPixSales || 0}
+                directPixCount={metrics.directPixCount || 0}
               />
             </motion.div>
           )}
@@ -2436,85 +2439,85 @@ export function VendedorPanel() {
                 </GlowCard>
               </div>
 
-              {/* Client codes */}
-              <GlowCard>
-                <div className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-white font-bold text-sm flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-[#00f0ff]" /> Cliente ({generatedCodesCliente.length})
-                    </h3>
-                    <div className="flex gap-2 text-[11px]">
-                      <span className="text-[#00ff41]">{generatedCodesCliente.filter((c) => c.used).length} usados</span>
-                      <span className="text-[#ff9f00]">{generatedCodesCliente.filter((c) => !c.used).length} disp</span>
-                    </div>
-                  </div>
-                  {generatedCodesCliente.length === 0 ? (
-                    <p className="text-gray-600 text-center py-3 text-[10px]">Nenhum codigo</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {generatedCodesCliente.map((item, i) => (
-                        <div key={`c-${item.code}-${i}`} className={`flex items-center justify-between p-2.5 rounded-lg border ${item.used ? "bg-[#00ff41]/5 border-[#00ff41]/15" : "bg-[#ff9f00]/5 border-[#ff9f00]/20"}`}>
-                          <div className="flex items-center gap-2 min-w-0">
-                            <motion.div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.used ? "bg-[#00ff41]" : "bg-[#ff9f00]"}`}
-                              animate={item.used ? {} : { scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
-                              transition={{ duration: 1.5, repeat: Infinity }}
-                            />
-                            <div className="min-w-0">
-                              <span className="text-white font-mono text-xs truncate block">{item.code}</span>
-                              {item.used && item.usedBy ? <p className="text-[#00ff41] text-[10px]">@{item.usedBy}</p> : <p className="text-[#ff9f00] text-[10px]">Aguardando</p>}
+              {/* Client codes - only show pending (unused) */}
+              {(() => {
+                const pendingCliente = generatedCodesCliente.filter((c) => !c.used);
+                return (
+                  <GlowCard>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-white font-bold text-sm flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-[#00f0ff]" /> Cliente ({pendingCliente.length} pendente{pendingCliente.length !== 1 ? "s" : ""})
+                        </h3>
+                        <span className="text-[#ff9f00] text-[11px]">{pendingCliente.length} aguardando</span>
+                      </div>
+                      {pendingCliente.length === 0 ? (
+                        <p className="text-gray-600 text-center py-3 text-[10px]">Nenhum codigo pendente</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {pendingCliente.map((item, i) => (
+                            <div key={`c-${item.code}-${i}`} className="flex items-center justify-between p-2.5 rounded-lg border bg-[#ff9f00]/5 border-[#ff9f00]/20">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <motion.div className="w-1.5 h-1.5 rounded-full shrink-0 bg-[#ff9f00]"
+                                  animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                                  transition={{ duration: 1.5, repeat: Infinity }}
+                                />
+                                <div className="min-w-0">
+                                  <span className="text-white font-mono text-xs truncate block">{item.code}</span>
+                                  <p className="text-[#ff9f00] text-[10px]">Aguardando</p>
+                                </div>
+                              </div>
+                              <button onClick={() => copyToClipboard(item.code)} className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] shrink-0">
+                                {copied === item.code ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                              </button>
                             </div>
-                          </div>
-                          {!item.used && (
-                            <button onClick={() => copyToClipboard(item.code)} className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] shrink-0">
-                              {copied === item.code ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                          )}
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              </GlowCard>
+                  </GlowCard>
+                );
+              })()}
 
-              {/* Driver codes */}
-              <GlowCard glowColor="#ff00ff">
-                <div className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-white font-bold text-sm flex items-center gap-1.5">
-                      <Truck className="w-3.5 h-3.5 text-[#ff00ff]" /> Motorista ({generatedCodesMotorista.length})
-                    </h3>
-                    <div className="flex gap-2 text-[11px]">
-                      <span className="text-[#00ff41]">{generatedCodesMotorista.filter((c) => c.used).length} usados</span>
-                      <span className="text-[#ff9f00]">{generatedCodesMotorista.filter((c) => !c.used).length} disp</span>
-                    </div>
-                  </div>
-                  {generatedCodesMotorista.length === 0 ? (
-                    <p className="text-gray-600 text-center py-3 text-[10px]">Nenhum codigo</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {generatedCodesMotorista.map((item, i) => (
-                        <div key={`m-${item.code}-${i}`} className={`flex items-center justify-between p-2.5 rounded-lg border ${item.used ? "bg-[#00ff41]/5 border-[#00ff41]/15" : "bg-[#ff9f00]/5 border-[#ff9f00]/20"}`}>
-                          <div className="flex items-center gap-2 min-w-0">
-                            <motion.div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.used ? "bg-[#00ff41]" : "bg-[#ff9f00]"}`}
-                              animate={item.used ? {} : { scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
-                              transition={{ duration: 1.5, repeat: Infinity }}
-                            />
-                            <div className="min-w-0">
-                              <span className="text-white font-mono text-xs truncate block">{item.code}</span>
-                              {item.used && item.usedBy ? <p className="text-[#00ff41] text-[10px]">@{item.usedBy}</p> : <p className="text-[#ff9f00] text-[10px]">Aguardando</p>}
+              {/* Driver codes - only show pending (unused) */}
+              {(() => {
+                const pendingMotorista = generatedCodesMotorista.filter((c) => !c.used);
+                return (
+                  <GlowCard glowColor="#ff00ff">
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-white font-bold text-sm flex items-center gap-1.5">
+                          <Truck className="w-3.5 h-3.5 text-[#ff00ff]" /> Motorista ({pendingMotorista.length} pendente{pendingMotorista.length !== 1 ? "s" : ""})
+                        </h3>
+                        <span className="text-[#ff9f00] text-[11px]">{pendingMotorista.length} aguardando</span>
+                      </div>
+                      {pendingMotorista.length === 0 ? (
+                        <p className="text-gray-600 text-center py-3 text-[10px]">Nenhum codigo pendente</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {pendingMotorista.map((item, i) => (
+                            <div key={`m-${item.code}-${i}`} className="flex items-center justify-between p-2.5 rounded-lg border bg-[#ff9f00]/5 border-[#ff9f00]/20">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <motion.div className="w-1.5 h-1.5 rounded-full shrink-0 bg-[#ff9f00]"
+                                  animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                                  transition={{ duration: 1.5, repeat: Infinity }}
+                                />
+                                <div className="min-w-0">
+                                  <span className="text-white font-mono text-xs truncate block">{item.code}</span>
+                                  <p className="text-[#ff9f00] text-[10px]">Aguardando</p>
+                                </div>
+                              </div>
+                              <button onClick={() => copyToClipboard(item.code)} className="p-1 rounded-md hover:bg-[#ff00ff]/10 text-[#ff00ff] shrink-0">
+                                {copied === item.code ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                              </button>
                             </div>
-                          </div>
-                          {!item.used && (
-                            <button onClick={() => copyToClipboard(item.code)} className="p-1 rounded-md hover:bg-[#ff00ff]/10 text-[#ff00ff] shrink-0">
-                              {copied === item.code ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                          )}
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              </GlowCard>
+                  </GlowCard>
+                );
+              })()}
             </motion.div>
           )}
 
