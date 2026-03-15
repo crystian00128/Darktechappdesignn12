@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Bell, X, MessageSquare, ShoppingBag, CreditCard, Phone, Check, Trash2, Code, UserPlus, Zap } from "lucide-react";
+import { Bell, X, MessageSquare, ShoppingBag, CreditCard, Phone, Check, Trash2, Code, UserPlus, Zap, Banknote, Truck } from "lucide-react";
 
 interface Notification {
   id: string;
@@ -12,12 +12,15 @@ interface Notification {
   read: boolean;
 }
 
-const STORAGE_KEY = "app_notifications_v1";
 const MAX_NOTIFICATIONS = 80;
 
-function loadFromStorage(): Notification[] {
+function getStorageKey(userKey: string): string {
+  return `notif_${userKey}`;
+}
+
+function loadFromStorage(userKey: string): Notification[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStorageKey(userKey));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -27,19 +30,39 @@ function loadFromStorage(): Notification[] {
   }
 }
 
-function saveToStorage(notifications: Notification[]) {
+function saveToStorage(userKey: string, notifications: Notification[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications.slice(0, MAX_NOTIFICATIONS)));
+    localStorage.setItem(getStorageKey(userKey), JSON.stringify(notifications.slice(0, MAX_NOTIFICATIONS)));
   } catch {}
 }
 
-export function NotificationBell() {
+interface NotificationBellProps {
+  userKey?: string;
+}
+
+export function NotificationBell({ userKey }: NotificationBellProps) {
+  // Derive a stable user key: use prop, or fallback to currentUser from localStorage
+  const resolvedKey = useMemo(() => {
+    if (userKey) return userKey;
+    try {
+      const u = JSON.parse(localStorage.getItem("currentUser") || "{}");
+      if (u.username && u.role) return `${u.role}:${u.username}`;
+      if (u.username) return u.username;
+    } catch {}
+    return "anonymous";
+  }, [userKey]);
+
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(() => loadFromStorage());
+  const [notifications, setNotifications] = useState<Notification[]>(() => loadFromStorage(resolvedKey));
   const [flashNew, setFlashNew] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+
+  // Reload notifications when userKey changes (e.g. user switch)
+  useEffect(() => {
+    setNotifications(loadFromStorage(resolvedKey));
+  }, [resolvedKey]);
 
   // Update panel position when open
   useEffect(() => {
@@ -56,16 +79,24 @@ export function NotificationBell() {
   const persistNotifications = useCallback((updater: (prev: Notification[]) => Notification[]) => {
     setNotifications((prev) => {
       const next = updater(prev);
-      saveToStorage(next);
+      saveToStorage(resolvedKey, next);
       return next;
     });
-  }, []);
+  }, [resolvedKey]);
 
-  // Listen for push messages from service worker
+  // Listen for push messages from service worker — only if targeted at this user
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === "NOTIFICATION_CLICKED") {
         const data = event.data.data;
+        // Check if this push is targeted at this user
+        const target = data.targetUser || data.targetUsername;
+        if (target && target !== resolvedKey) {
+          // Also check just the username part (resolvedKey is "role:username")
+          const parts = resolvedKey.split(":");
+          const username = parts.length > 1 ? parts[1] : parts[0];
+          if (target !== username) return; // Not for this user
+        }
         const notif: Notification = {
           id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title: data.title || "Notificacao",
@@ -88,12 +119,25 @@ export function NotificationBell() {
         navigator.serviceWorker.removeEventListener("message", handler);
       }
     };
-  }, [persistNotifications]);
+  }, [persistNotifications, resolvedKey]);
 
-  // Listen for in-app notification events
+  // Listen for in-app notification events — only accept if targeted at this user
   useEffect(() => {
     const handler = (e: CustomEvent) => {
-      const { title, body, type } = e.detail;
+      const { title, body, type, targetUser } = e.detail;
+      // If event specifies a targetUser, only this user's bell should handle it
+      if (targetUser) {
+        const parts = resolvedKey.split(":");
+        const username = parts.length > 1 ? parts[1] : parts[0];
+        const role = parts.length > 1 ? parts[0] : "";
+        // Match by exact key "role:username", or just username
+        if (targetUser !== resolvedKey && targetUser !== username) {
+          // Also try matching "role:username" format on targetUser
+          if (!targetUser.includes(":") || targetUser !== resolvedKey) {
+            return; // Not for this user, skip
+          }
+        }
+      }
       const notif: Notification = {
         id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         title: title || "Notificacao",
@@ -108,7 +152,7 @@ export function NotificationBell() {
     };
     window.addEventListener("app-notification" as any, handler);
     return () => window.removeEventListener("app-notification" as any, handler);
-  }, [persistNotifications]);
+  }, [persistNotifications, resolvedKey]);
 
   // Close on outside click
   useEffect(() => {
@@ -148,6 +192,9 @@ export function NotificationBell() {
       case "incoming_call": return <Phone className="w-3.5 h-3.5 text-[#ff006e]" />;
       case "code_generated": return <Code className="w-3.5 h-3.5 text-[#ff9f00]" />;
       case "user_registered": return <UserPlus className="w-3.5 h-3.5 text-[#00ff41]" />;
+      case "withdrawal_request":
+      case "withdrawal_completed": return <Banknote className="w-3.5 h-3.5 text-[#ff9f00]" />;
+      case "delivery_update": return <Truck className="w-3.5 h-3.5 text-[#8b5cf6]" />;
       default: return <Bell className="w-3.5 h-3.5 text-[#ff9f00]" />;
     }
   };
@@ -161,6 +208,8 @@ export function NotificationBell() {
       case "incoming_call": return "#ff006e";
       case "code_generated": return "#ff9f00";
       case "user_registered": return "#00ff41";
+      case "withdrawal_request": case "withdrawal_completed": return "#ff9f00";
+      case "delivery_update": return "#8b5cf6";
       default: return "#ff9f00";
     }
   };
@@ -178,12 +227,12 @@ export function NotificationBell() {
   };
 
   // Group notifications by today/yesterday/older
-  const groupNotifications = () => {
+  const groups = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const yesterday = today - 86400000;
 
-    const groups: { label: string; items: Notification[] }[] = [
+    const g: { label: string; items: Notification[] }[] = [
       { label: "Hoje", items: [] },
       { label: "Ontem", items: [] },
       { label: "Anteriores", items: [] },
@@ -191,15 +240,13 @@ export function NotificationBell() {
 
     for (const n of notifications) {
       const ts = new Date(n.timestamp).getTime();
-      if (ts >= today) groups[0].items.push(n);
-      else if (ts >= yesterday) groups[1].items.push(n);
-      else groups[2].items.push(n);
+      if (ts >= today) g[0].items.push(n);
+      else if (ts >= yesterday) g[1].items.push(n);
+      else g[2].items.push(n);
     }
 
-    return groups.filter((g) => g.items.length > 0);
-  };
-
-  const groups = groupNotifications();
+    return g.filter((gr) => gr.items.length > 0);
+  }, [notifications]);
 
   return (
     <div className="relative">
@@ -358,7 +405,7 @@ export function NotificationBell() {
                     <span className="text-gray-700 text-[10px]">{notifications.length} notificacao(es)</span>
                     <div className="flex items-center gap-1">
                       <Zap className="w-3 h-3 text-gray-700" />
-                      <span className="text-gray-700 text-[10px]">Persistidas localmente</span>
+                      <span className="text-gray-700 text-[10px]">Privado</span>
                     </div>
                   </div>
                 )}

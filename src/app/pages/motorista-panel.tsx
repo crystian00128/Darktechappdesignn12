@@ -982,7 +982,7 @@ export function MotoristaPanel() {
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <NotificationBell />
+              <NotificationBell userKey={`motorista:${currentUser.username}`} />
               <motion.button onClick={() => setShowLogoutConfirm(true)} whileTap={{ scale: 0.9 }} className="p-2 rounded-xl bg-[#ff006e]/10 text-[#ff006e]">
                 <LogOut className="w-4 h-4" />
               </motion.button>

@@ -659,7 +659,7 @@ export function AdminPanel() {
   };
 
   return (
-    <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Painel Admin">
+    <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Painel Admin" userKey="admin:admin">
       {/* ===================== DASHBOARD ===================== */}
       {activeTab === "dashboard" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">

@@ -20,6 +20,7 @@ interface SidebarLayoutProps {
   headerAction?: ReactNode;
   centerAction?: ReactNode;
   onLogout?: () => void;
+  userKey?: string;
 }
 
 export function SidebarLayout({
@@ -31,6 +32,7 @@ export function SidebarLayout({
   headerAction,
   centerAction,
   onLogout,
+  userKey,
 }: SidebarLayoutProps) {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -324,7 +326,7 @@ export function SidebarLayout({
 
           {/* Notification Bell */}
           <div className="ml-2">
-            <NotificationBell />
+            <NotificationBell userKey={userKey} />
           </div>
 
           {/* Online status dot */}

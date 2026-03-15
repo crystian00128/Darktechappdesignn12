@@ -435,7 +435,7 @@ export function ClientePanel() {
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <NotificationBell />
+          <NotificationBell userKey={`cliente:${currentUser.username}`} />
           {cartCount > 0 && (
             <motion.button whileTap={{ scale: 0.9 }} onClick={() => setShowCart(true)}
               className="relative p-2.5 rounded-xl bg-[#00f0ff]/15 text-[#00f0ff]">

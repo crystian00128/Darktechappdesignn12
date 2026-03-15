@@ -2036,6 +2036,7 @@ export function VendedorPanel() {
 
       <div className={isAdminViewing ? "pt-[40px]" : ""}>
         <SidebarLayout menuItems={menuItems} activeTab={activeTab} onTabChange={(t) => { sfx.playNavigate(); setActiveTab(t); }} title="Vendedor" headerAction={headerAction}
+          userKey={`vendedor:${currentUser.username}`}
           onLogout={() => {
             localStorage.setItem("vendedor_online_" + currentUser.username, "false");
             pwa.setPushEnabledForUser(currentUser.username, false);
