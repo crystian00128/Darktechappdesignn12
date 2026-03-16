@@ -35,11 +35,14 @@ export default function App() {
       try {
         console.log("Inicializando banco de dados...");
         const response = await api.initDatabase();
-        console.log("Banco inicializado:", response.message);
-        console.log("Login Admin: username='admin', PIN='414243'");
+        if (response.success) {
+          console.log("Banco inicializado:", response.message);
+          console.log("Login Admin: username='admin', PIN='414243'");
+        } else {
+          console.log("Init DB retornou sem sucesso (pode ser cold-start):", response.error || "");
+        }
       } catch (error) {
-        console.error("Erro ao inicializar banco:", error);
-        console.log("Use o botao 'Inicializar Banco' na tela de login");
+        // Silent — fetchAPI never throws, but just in case
       }
     };
     initDB();

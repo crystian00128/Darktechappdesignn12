@@ -275,37 +275,44 @@ app.post("/make-server-42377006/cleanup", async (c) => {
     console.log("📋 Clientes a remover:", clienteUsernames);
     console.log("📋 Motoristas a remover:", motoristaUsernames);
 
-    // 2. Deletar dados de cada vendedor
-    for (const username of vendedorUsernames) {
+    // 2. Deep clean ALL data for each user (EVERY known KV key pattern)
+    const allUsernames = [...vendedorUsernames, ...clienteUsernames, ...motoristaUsernames];
+    for (const username of allUsernames) {
       await kv.del(`user:${username}`);
       await kv.del(`created_by:${username}`);
       await kv.del(`products:${username}`);
+      await kv.del(`status:${username}`);
       await kv.del(`orders:vendor:${username}`);
-      await kv.del(`status:${username}`);
-      console.log(`  🗑️ Vendedor removido: ${username}`);
-    }
-
-    // 3. Deletar dados de cada cliente
-    for (const username of clienteUsernames) {
-      await kv.del(`user:${username}`);
       await kv.del(`orders:client:${username}`);
-      await kv.del(`status:${username}`);
-      console.log(`  🗑️ Cliente removido: ${username}`);
-    }
-
-    // 4. Deletar dados de cada motorista
-    for (const username of motoristaUsernames) {
-      await kv.del(`user:${username}`);
       await kv.del(`orders:driver:${username}`);
-      await kv.del(`status:${username}`);
-      console.log(`  🗑️ Motorista removido: ${username}`);
+      await kv.del(`presence:${username}`);
+      await kv.del(`notifications:${username}`);
+      await kv.del(`push:subscriptions:${username}`);
+      await kv.del(`wallet:${username}`);
+      await kv.del(`withdrawals:${username}`);
+      await kv.del(`vendor:withdrawals:${username}`);
+      await kv.del(`vendor:pix_address:${username}`);
+      await kv.del(`inapp_notif:vendedor:${username}`);
+      await kv.del(`inapp_notif:cliente:${username}`);
+      await kv.del(`inapp_notif:motorista:${username}`);
+      await kv.del(`inapp_notif:admin:${username}`);
+      await kv.del(`face:${username}`);
+      await kv.del(`driver:earnings:${username}`);
+      await kv.del(`pix_direct_sales:${username}`);
+      console.log(`  🗑️ Removido com deep clean: ${username}`);
+    }
+    // Clean driver configs
+    for (const v of vendedorUsernames) {
+      for (const m of motoristaUsernames) {
+        await kv.del(`driver_config:${v}:${m}`);
+      }
     }
 
     // 5. Limpar chats entre todos os usuários
-    const allUsernames = [...vendedorUsernames, ...clienteUsernames, ...motoristaUsernames, "admin"];
-    for (let i = 0; i < allUsernames.length; i++) {
-      for (let j = i + 1; j < allUsernames.length; j++) {
-        const chatId = [allUsernames[i], allUsernames[j]].sort().join(":");
+    const allUsernamesWithAdmin = [...allUsernames, "admin"];
+    for (let i = 0; i < allUsernamesWithAdmin.length; i++) {
+      for (let j = i + 1; j < allUsernamesWithAdmin.length; j++) {
+        const chatId = [allUsernamesWithAdmin[i], allUsernamesWithAdmin[j]].sort().join(":");
         await kv.del(`chat:${chatId}`);
       }
     }
@@ -314,7 +321,10 @@ app.post("/make-server-42377006/cleanup", async (c) => {
     // 6. Limpar created_by do admin
     await kv.del("created_by:admin");
 
-    // 7. Resetar listas para vazio
+    // 7. Limpar lista global de saques do admin
+    await kv.del("admin:withdrawal_requests");
+
+    // 8. Resetar listas para vazio
     await kv.set("users:vendedor", []);
     await kv.set("users:cliente", []);
     await kv.set("users:motorista", []);
@@ -601,7 +611,14 @@ app.get("/make-server-42377006/codes/:type", async (c) => {
       return c.json({ success: false, error: "Tipo inválido" }, 400);
     }
     
-    const codes = await kv.get(`codes:${type}`) || [];
+    let codes = await kv.get(`codes:${type}`) || [];
+    
+    // Auto-clean any legacy used codes (should have been spliced on registration)
+    const cleanedCodes = codes.filter((c: any) => !c.used);
+    if (cleanedCodes.length !== codes.length) {
+      codes = cleanedCodes;
+      await kv.set(`codes:${type}`, codes);
+    }
     
     return c.json({ success: true, codes });
   } catch (error) {
@@ -699,13 +716,11 @@ app.post("/make-server-42377006/register", async (c) => {
         }, 400);
       }
       
-      // ✅ Código válido! Marcar como usado IMEDIATAMENTE (antes de criar o usuário)
-      codes[codeIndex].used = true;
-      codes[codeIndex].usedBy = username;
-      codes[codeIndex].usedAt = new Date().toISOString();
+      // ✅ Código válido! REMOVE the code entirely (used codes must not exist)
+      codes.splice(codeIndex, 1);
       
       await kv.set(`codes:${role}`, codes);
-      console.log("✅ Código marcado como usado:", codes[codeIndex]);
+      console.log("✅ Código consumido e removido da lista:", trimmedCode);
       
       // Guardar quem criou este usuário e qual código foi usado
       createdByUser = codeObj.generatedBy;
@@ -833,17 +848,17 @@ app.get("/make-server-42377006/users/created-by/:username", async (c) => {
       }
     }
     
-    // Se encontrou usuários que não estavam na lista auxiliar, reparar a lista
-    if (missingUsers.length > 0) {
-      console.log(`🔧 Reparando lista created_by:${username} - adicionando ${missingUsers.length} usuários faltantes`);
-      const updatedList = [...createdList];
-      for (const missing of missingUsers) {
-        if (!updatedList.some((item: any) => item.username === missing.username)) {
-          updatedList.push(missing);
-        }
-      }
-      await kv.set(`created_by:${username}`, updatedList);
-      console.log("✅ Lista reparada:", updatedList);
+    // Rebuild the list: only keep users that actually exist + add any missing ones
+    const rebuiltList = Array.from(usersFromList.entries()).map(([uname, userData]: [string, any]) => ({
+      username: uname,
+      role: userData.role,
+      createdAt: userData.createdAt,
+    }));
+    // Check if the list changed (removed deleted users or added missing ones)
+    const listChanged = rebuiltList.length !== createdList.length || missingUsers.length > 0;
+    if (listChanged) {
+      await kv.set(`created_by:${username}`, rebuiltList);
+      console.log(`🔧 Lista created_by:${username} atualizada: ${createdList.length} → ${rebuiltList.length} entradas`);
     }
     
     const users = Array.from(usersFromList.values());
@@ -929,12 +944,22 @@ app.delete("/make-server-42377006/vendor/:username", async (c) => {
       console.log(`  🗑️ Vinculado removido: ${linkedUsername} (${linkedUser.role})`);
     }
 
-    // Deletar dados do vendedor
+    // Deletar dados do vendedor — TODAS as chaves KV conhecidas
     await kv.del(`user:${vendorUsername}`);
     await kv.del(`created_by:${vendorUsername}`);
     await kv.del(`products:${vendorUsername}`);
     await kv.del(`orders:vendor:${vendorUsername}`);
     await kv.del(`status:${vendorUsername}`);
+    await kv.del(`presence:${vendorUsername}`);
+    await kv.del(`notifications:${vendorUsername}`);
+    await kv.del(`push:subscriptions:${vendorUsername}`);
+    await kv.del(`wallet:${vendorUsername}`);
+    await kv.del(`withdrawals:${vendorUsername}`);
+    await kv.del(`vendor:withdrawals:${vendorUsername}`);
+    await kv.del(`vendor:pix_address:${vendorUsername}`);
+    await kv.del(`inapp_notif:vendedor:${vendorUsername}`);
+    await kv.del(`face:${vendorUsername}`);
+    await kv.del(`pix_direct_sales:${vendorUsername}`);
     const chatIdAdmin = ["admin", vendorUsername].sort().join(":");
     await kv.del(`chat:${chatIdAdmin}`);
 
@@ -946,17 +971,92 @@ app.delete("/make-server-42377006/vendor/:username", async (c) => {
     const adminCreatedBy = await kv.get("created_by:admin") || [];
     await kv.set("created_by:admin", adminCreatedBy.filter((item: any) => item.username !== vendorUsername));
 
-    // Limpar códigos gerados por este vendedor
+    // Limpar códigos gerados por este vendedor (delete entirely)
     const codesCliente = await kv.get("codes:cliente") || [];
     await kv.set("codes:cliente", codesCliente.filter((c: any) => c.generatedBy !== vendorUsername));
     const codesMotorista = await kv.get("codes:motorista") || [];
     await kv.set("codes:motorista", codesMotorista.filter((c: any) => c.generatedBy !== vendorUsername));
 
-    // Liberar o código que criou o vendedor
+    // Delete the vendor's own invite code entirely (never re-appear)
+    // Remove codes: usedBy match, used:true legacy codes, AND any code whose
+    // inviteCodeUsed matches (belt-and-suspenders cleanup)
     const codesVendedor = await kv.get("codes:vendedor") || [];
-    await kv.set("codes:vendedor", codesVendedor.map((c: any) =>
-      c.usedBy === vendorUsername ? { ...c, used: false, usedBy: null, usedAt: null } : c
-    ));
+    const cleanedVendorCodes = codesVendedor.filter((c: any) => {
+      // Remove any code used by this vendor
+      if (c.usedBy === vendorUsername) return false;
+      // Remove any legacy code marked as used (should have been spliced)
+      if (c.used === true) return false;
+      return true;
+    });
+    await kv.set("codes:vendedor", cleanedVendorCodes);
+
+    // ═══ DEEP CLEAN: Remove ALL traces of deleted vendor and linked users ═══
+    const allDeletedUsernames = [vendorUsername, ...linkedUsernames];
+    for (const uname of allDeletedUsernames) {
+      // Notifications & presence
+      await kv.del(`notifications:${uname}`);
+      await kv.del(`presence:${uname}`);
+      await kv.del(`push:subscriptions:${uname}`);
+      // Wallet & withdrawals (BOTH key patterns!)
+      await kv.del(`wallet:${uname}`);
+      await kv.del(`withdrawals:${uname}`);
+      await kv.del(`vendor:withdrawals:${uname}`);
+      await kv.del(`vendor:pix_address:${uname}`);
+      // In-app notifications (all role prefixes)
+      await kv.del(`inapp_notif:vendedor:${uname}`);
+      await kv.del(`inapp_notif:cliente:${uname}`);
+      await kv.del(`inapp_notif:motorista:${uname}`);
+      await kv.del(`inapp_notif:admin:${uname}`);
+      // Orders from client/driver perspective
+      await kv.del(`orders:client:${uname}`);
+      await kv.del(`orders:driver:${uname}`);
+      // Face, driver earnings, PIX
+      await kv.del(`face:${uname}`);
+      await kv.del(`driver:earnings:${uname}`);
+      await kv.del(`pix_direct_sales:${uname}`);
+      await kv.del(`status:${uname}`);
+    }
+    // Clean driver configs for this vendor
+    for (const linkedUsername of linkedUsernames) {
+      await kv.del(`driver_config:${vendorUsername}:${linkedUsername}`);
+    }
+    // Clean admin:withdrawal_requests — remove entries from deleted users
+    const adminWdRequests = await kv.get("admin:withdrawal_requests") || [];
+    const cleanedAdminWd = adminWdRequests.filter((r: any) => !allDeletedUsernames.includes(r.vendorUsername));
+    if (cleanedAdminWd.length !== adminWdRequests.length) {
+      await kv.set("admin:withdrawal_requests", cleanedAdminWd);
+    }
+
+    // ═══ CLEAN ORDERS: Remove orders referencing deleted users from remaining users ═══
+    // Clean orders from remaining vendors that reference deleted clients
+    const remainingVendors = await kv.get("users:vendedor") || [];
+    for (const rv of remainingVendors) {
+      const rvOrders = await kv.get(`orders:vendor:${rv}`) || [];
+      const cleaned = rvOrders.filter((o: any) => !allDeletedUsernames.includes(o.clientUsername));
+      if (cleaned.length !== rvOrders.length) {
+        await kv.set(`orders:vendor:${rv}`, cleaned);
+      }
+    }
+    // Clean orders from remaining clients that reference deleted vendors
+    const remainingClients = await kv.get("users:cliente") || [];
+    for (const rc of remainingClients) {
+      const rcOrders = await kv.get(`orders:client:${rc}`) || [];
+      const cleaned = rcOrders.filter((o: any) => !allDeletedUsernames.includes(o.vendorUsername));
+      if (cleaned.length !== rcOrders.length) {
+        await kv.set(`orders:client:${rc}`, cleaned);
+      }
+    }
+    // Clean orders from remaining drivers that reference deleted vendors/clients
+    const remainingDrivers = await kv.get("users:motorista") || [];
+    for (const rd of remainingDrivers) {
+      const rdOrders = await kv.get(`orders:driver:${rd}`) || [];
+      const cleaned = rdOrders.filter((o: any) => 
+        !allDeletedUsernames.includes(o.vendorUsername) && !allDeletedUsernames.includes(o.clientUsername)
+      );
+      if (cleaned.length !== rdOrders.length) {
+        await kv.set(`orders:driver:${rd}`, cleaned);
+      }
+    }
 
     console.log(`✅ Vendedor ${vendorUsername} e ${linkedUsernames.length} vinculados removidos!`);
     return c.json({
@@ -983,10 +1083,30 @@ app.get("/make-server-42377006/hierarchy", async (c) => {
     const clienteUsernames = await kv.get("users:cliente") || [];
     const motoristaUsernames = await kv.get("users:motorista") || [];
     
-    // Buscar todos os códigos
-    const codesVendedor = await kv.get("codes:vendedor") || [];
-    const codesCliente = await kv.get("codes:cliente") || [];
-    const codesMotorista = await kv.get("codes:motorista") || [];
+    // Buscar todos os códigos — auto-clean any stale used:true codes (legacy)
+    let codesVendedor = await kv.get("codes:vendedor") || [];
+    let codesCliente = await kv.get("codes:cliente") || [];
+    let codesMotorista = await kv.get("codes:motorista") || [];
+
+    // Remove legacy used codes and codes from non-existent generators
+    const cleanCodes = (codes: any[], validGenerators: string[]) =>
+      codes.filter((c: any) => !c.used && validGenerators.includes(c.generatedBy));
+
+    const cleanedV = cleanCodes(codesVendedor, ["admin"]);
+    if (cleanedV.length !== codesVendedor.length) {
+      codesVendedor = cleanedV;
+      await kv.set("codes:vendedor", codesVendedor);
+    }
+    const cleanedC = cleanCodes(codesCliente, vendedorUsernames);
+    if (cleanedC.length !== codesCliente.length) {
+      codesCliente = cleanedC;
+      await kv.set("codes:cliente", codesCliente);
+    }
+    const cleanedM = cleanCodes(codesMotorista, vendedorUsernames);
+    if (cleanedM.length !== codesMotorista.length) {
+      codesMotorista = cleanedM;
+      await kv.set("codes:motorista", codesMotorista);
+    }
     const allCodes = [...codesVendedor, ...codesCliente, ...codesMotorista];
     
     // Construir árvore de vendedores com seus subordinados
@@ -995,9 +1115,6 @@ app.get("/make-server-42377006/hierarchy", async (c) => {
       const vendedor = await kv.get(`user:${vUsername}`);
       if (!vendedor) continue;
       const { pin, ...vData } = vendedor;
-      
-      // Código que criou este vendedor
-      const originCode = allCodes.find((c: any) => c.usedBy === vUsername);
       
       // Buscar clientes e motoristas vinculados a este vendedor
       const createdByList = await kv.get(`created_by:${vUsername}`) || [];
@@ -1008,19 +1125,19 @@ app.get("/make-server-42377006/hierarchy", async (c) => {
         const u = await kv.get(`user:${item.username}`);
         if (!u) continue;
         const { pin: _, ...uData } = u;
-        const uCode = allCodes.find((c: any) => c.usedBy === item.username);
-        const entry = { ...uData, inviteCodeUsed: uCode?.code || null, registeredAt: u.createdAt };
+        // Use the stored inviteCodeUsed from user record (codes are removed on use)
+        const entry = { ...uData, inviteCodeUsed: u.inviteCodeUsed || null, registeredAt: u.createdAt };
         if (u.role === "cliente") linkedClientes.push(entry);
         else if (u.role === "motorista") linkedMotoristas.push(entry);
       }
       
-      // Códigos gerados por este vendedor
-      const vendorCodesCliente = codesCliente.filter((c: any) => c.generatedBy === vUsername);
-      const vendorCodesMotorista = codesMotorista.filter((c: any) => c.generatedBy === vUsername);
+      // Códigos gerados por este vendedor (only unused/pending — used codes are already removed)
+      const vendorCodesCliente = codesCliente.filter((c: any) => c.generatedBy === vUsername && !c.used);
+      const vendorCodesMotorista = codesMotorista.filter((c: any) => c.generatedBy === vUsername && !c.used);
       
       vendedores.push({
         ...vData,
-        inviteCodeUsed: originCode?.code || null,
+        inviteCodeUsed: vendedor.inviteCodeUsed || null,
         registeredAt: vendedor.createdAt,
         clientes: linkedClientes,
         motoristas: linkedMotoristas,
@@ -1039,9 +1156,9 @@ app.get("/make-server-42377006/hierarchy", async (c) => {
       });
     }
     
-    // Códigos gerados pelo admin
+    // All remaining vendor codes are unused (used codes are already removed/cleaned)
     const adminCodes = codesVendedor.map((c: any) => ({
-      code: c.code, used: c.used, usedBy: c.usedBy, generatedAt: c.generatedAt, usedAt: c.usedAt,
+      code: c.code, used: false, generatedAt: c.generatedAt,
     }));
     
     return c.json({
@@ -1057,8 +1174,8 @@ app.get("/make-server-42377006/hierarchy", async (c) => {
             totalClientes: clienteUsernames.length,
             totalMotoristas: motoristaUsernames.length,
             totalCodesGenerated: codesVendedor.length,
-            totalCodesUsed: codesVendedor.filter((c: any) => c.used).length,
-            totalCodesAvailable: codesVendedor.filter((c: any) => !c.used).length,
+            totalCodesUsed: 0,
+            totalCodesAvailable: codesVendedor.length,
           },
         },
         vendedores,
@@ -1177,10 +1294,8 @@ app.post("/make-server-42377006/link-user", async (c) => {
       return c.json({ success: false, error: "Você já está vinculado a este vendedor" }, 400);
     }
     
-    // Marcar código como usado
-    codes[codeIndex].used = true;
-    codes[codeIndex].usedBy = username;
-    codes[codeIndex].usedAt = new Date().toISOString();
+    // REMOVE the code entirely from the list (used codes must not exist)
+    codes.splice(codeIndex, 1);
     await kv.set(`codes:${type}`, codes);
     
     // Update linkedVendors array (supports multiple vendors)
@@ -1708,11 +1823,41 @@ app.post("/make-server-42377006/orders", async (c) => {
 app.get("/make-server-42377006/orders/vendor/:username", async (c) => {
   try {
     const username = c.req.param("username");
-    const orders = await kv.get(`orders:vendor:${username}`) || [];
-    // Auto-cancel pending_payment orders older than 15 minutes
-    const EXPIRY_MS = 15 * 60 * 1000;
-    let changed = false;
+    let orders = await kv.get(`orders:vendor:${username}`) || [];
+
+    // Auto-remove orders from deleted clients (client user no longer exists)
+    const origVendorLen = orders.length;
+    const validVendorOrders: any[] = [];
     for (const order of orders) {
+      if (order.clientUsername) {
+        const clientUser = await kv.get(`user:${order.clientUsername}`);
+        if (!clientUser) { continue; }
+      }
+      validVendorOrders.push(order);
+    }
+    orders = validVendorOrders;
+
+    // Auto-fix orders where paymentStatus is paid but status is still pending_payment
+    const EXPIRY_MS = 24 * 60 * 60 * 1000;
+    let changed = orders.length !== origVendorLen;
+    for (const order of orders) {
+      if (order.status === "pending_payment" && order.paymentStatus === "paid") {
+        order.status = "pending";
+        order.updatedAt = new Date().toISOString();
+        changed = true;
+        console.log(`🔧 Auto-fixed vendor order ${order.id}: pending_payment → pending (already paid)`);
+      }
+      // Auto-restore: cancelled by PIX expiry but payment was confirmed later
+      if (order.status === "cancelled" && (order.cancelReason === "pix_expired" || order.cancelReason === "pix_cancelled") && order.paymentStatus === "paid") {
+        order.status = "pending";
+        order.cancelReason = null;
+        order.restoredFromExpiry = true;
+        order.restoredAt = new Date().toISOString();
+        order.updatedAt = new Date().toISOString();
+        changed = true;
+        console.log(`🔄 Auto-restored vendor order ${order.id}: cancelled (pix_expired) → pending (payment confirmed)`);
+      }
+      // Auto-cancel pending_payment orders older than 24 hours
       if (order.status === "pending_payment" && order.createdAt) {
         const elapsed = Date.now() - new Date(order.createdAt).getTime();
         if (elapsed > EXPIRY_MS) {
@@ -1747,11 +1892,40 @@ app.get("/make-server-42377006/orders/vendor/:username", async (c) => {
 app.get("/make-server-42377006/orders/client/:username", async (c) => {
   try {
     const username = c.req.param("username");
-    const orders = await kv.get(`orders:client:${username}`) || [];
-    // Auto-cancel pending_payment orders older than 15 minutes
-    const EXPIRY_MS = 15 * 60 * 1000;
-    let changed = false;
+    let orders = await kv.get(`orders:client:${username}`) || [];
+
+    // Auto-remove orders from deleted vendors
+    const origClientLen = orders.length;
+    const validClientOrders: any[] = [];
     for (const order of orders) {
+      if (order.vendorUsername) {
+        const vendorUser = await kv.get(`user:${order.vendorUsername}`);
+        if (!vendorUser) { continue; }
+      }
+      validClientOrders.push(order);
+    }
+    orders = validClientOrders;
+
+    // Auto-fix orders where paymentStatus is paid but status is still pending_payment
+    const EXPIRY_MS = 24 * 60 * 60 * 1000;
+    let changed = orders.length !== origClientLen;
+    for (const order of orders) {
+      if (order.status === "pending_payment" && order.paymentStatus === "paid") {
+        order.status = "pending";
+        order.updatedAt = new Date().toISOString();
+        changed = true;
+        console.log(`🔧 Auto-fixed client order ${order.id}: pending_payment → pending (already paid)`);
+      }
+      // Auto-restore: cancelled by PIX expiry but payment was confirmed later
+      if (order.status === "cancelled" && (order.cancelReason === "pix_expired" || order.cancelReason === "pix_cancelled") && order.paymentStatus === "paid") {
+        order.status = "pending";
+        order.cancelReason = null;
+        order.restoredFromExpiry = true;
+        order.restoredAt = new Date().toISOString();
+        order.updatedAt = new Date().toISOString();
+        changed = true;
+        console.log(`🔄 Auto-restored client order ${order.id}: cancelled (pix_expired) → pending (payment confirmed)`);
+      }
       if (order.status === "pending_payment" && order.createdAt) {
         const elapsed = Date.now() - new Date(order.createdAt).getTime();
         if (elapsed > EXPIRY_MS) {
@@ -1786,7 +1960,28 @@ app.get("/make-server-42377006/orders/client/:username", async (c) => {
 app.get("/make-server-42377006/orders/driver/:username", async (c) => {
   try {
     const username = c.req.param("username");
-    const orders = await kv.get(`orders:driver:${username}`) || [];
+    let orders = await kv.get(`orders:driver:${username}`) || [];
+
+    // Auto-remove orders from deleted vendors or clients
+    const origDriverLen = orders.length;
+    const validDriverOrders: any[] = [];
+    for (const order of orders) {
+      if (order.vendorUsername) {
+        const vendorUser = await kv.get(`user:${order.vendorUsername}`);
+        if (!vendorUser) { continue; }
+      }
+      if (order.clientUsername) {
+        const clientUser = await kv.get(`user:${order.clientUsername}`);
+        if (!clientUser) { continue; }
+      }
+      validDriverOrders.push(order);
+    }
+    orders = validDriverOrders;
+
+    if (orders.length !== origDriverLen) {
+      await kv.set(`orders:driver:${username}`, orders);
+    }
+
     return c.json({ success: true, orders });
   } catch (error) {
     return c.json({ success: false, error: String(error) }, 500);
@@ -1918,6 +2113,156 @@ app.put("/make-server-42377006/orders/:orderId/status", async (c) => {
     return c.json({ success: true, message: `Pedido atualizado para ${status}` });
   } catch (error) {
     console.error("❌ Erro ao atualizar pedido:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== MANUAL PAYMENT CONFIRMATION ====================
+// Client calls this when PIX polling detects payment success
+// This updates BOTH client and vendor order copies (webhook may not fire in testing)
+app.post("/make-server-42377006/orders/:orderId/confirm-payment", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { vendorUsername, clientUsername } = await c.req.json();
+    console.log(`💰 Manual payment confirmation for order ${orderId}`);
+
+    if (!orderId || !vendorUsername || !clientUsername) {
+      return c.json({ success: false, error: "orderId, vendorUsername e clientUsername obrigatórios" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    let updated = false;
+    let wasRestored = false;
+
+    // Update vendor orders — also restores cancelled orders from PIX expiry
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx !== -1) {
+      const prevStatus = vendorOrders[vIdx].status;
+      if (prevStatus === "pending_payment" || vendorOrders[vIdx].paymentStatus === "awaiting") {
+        vendorOrders[vIdx].paymentStatus = "paid";
+        vendorOrders[vIdx].pixPaidAt = now;
+        if (prevStatus === "pending_payment") {
+          vendorOrders[vIdx].status = "pending";
+        }
+        vendorOrders[vIdx].updatedAt = now;
+        await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+        updated = true;
+        console.log(`✅ Vendor order ${orderId} marked as paid`);
+      } else if (prevStatus === "cancelled" && (vendorOrders[vIdx].cancelReason === "pix_expired" || vendorOrders[vIdx].cancelReason === "pix_cancelled")) {
+        // RESTORE: PIX expired but payment actually went through!
+        vendorOrders[vIdx].paymentStatus = "paid";
+        vendorOrders[vIdx].pixPaidAt = now;
+        vendorOrders[vIdx].status = "pending";
+        vendorOrders[vIdx].cancelReason = null;
+        vendorOrders[vIdx].restoredFromExpiry = true;
+        vendorOrders[vIdx].restoredAt = now;
+        vendorOrders[vIdx].updatedAt = now;
+        await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+        updated = true;
+        wasRestored = true;
+        console.log(`🔄 RESTORED vendor order ${orderId} from cancelled → pending (manual confirm after expiry)`);
+      }
+    }
+
+    // Update client orders — same restore logic
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx !== -1) {
+      const prevStatus = clientOrders[cIdx].status;
+      if (prevStatus === "pending_payment" || clientOrders[cIdx].paymentStatus === "awaiting") {
+        clientOrders[cIdx].paymentStatus = "paid";
+        clientOrders[cIdx].pixPaidAt = now;
+        if (prevStatus === "pending_payment") {
+          clientOrders[cIdx].status = "pending";
+        }
+        clientOrders[cIdx].updatedAt = now;
+        await kv.set(`orders:client:${clientUsername}`, clientOrders);
+        updated = true;
+        console.log(`✅ Client order ${orderId} marked as paid`);
+      } else if (prevStatus === "cancelled" && (clientOrders[cIdx].cancelReason === "pix_expired" || clientOrders[cIdx].cancelReason === "pix_cancelled")) {
+        clientOrders[cIdx].paymentStatus = "paid";
+        clientOrders[cIdx].pixPaidAt = now;
+        clientOrders[cIdx].status = "pending";
+        clientOrders[cIdx].cancelReason = null;
+        clientOrders[cIdx].restoredFromExpiry = true;
+        clientOrders[cIdx].restoredAt = now;
+        clientOrders[cIdx].updatedAt = now;
+        await kv.set(`orders:client:${clientUsername}`, clientOrders);
+        updated = true;
+        wasRestored = true;
+        console.log(`🔄 RESTORED client order ${orderId} from cancelled → pending (manual confirm after expiry)`);
+      }
+    }
+
+    // Notify vendor about the paid order
+    if (updated) {
+      try {
+        const client = await kv.get(`user:${clientUsername}`);
+        const clientName = client?.name || clientUsername;
+        const orderTotal = vIdx !== -1 ? vendorOrders[vIdx].total : 0;
+        const notifTitle = wasRestored ? "🔄💰 Pedido Restaurado — PIX Confirmado!" : "🛒💰 Novo Pedido Pago!";
+        const notifBody = wasRestored
+          ? `${clientName} pagou R$ ${Number(orderTotal).toFixed(2)} — pedido expirado foi restaurado!`
+          : `${clientName} pagou R$ ${Number(orderTotal).toFixed(2)} via PIX!`;
+
+        sendPushToUser(vendorUsername, {
+          title: notifTitle,
+          body: notifBody,
+          tag: `order-paid-${orderId}`,
+          data: { url: "/", type: wasRestored ? "order_restored" : "order_paid", orderId },
+          vibrate: [300, 100, 300, 100, 300],
+        }).catch(() => {});
+
+        // Also notify admin
+        sendPushToUser("admin", {
+          title: wasRestored ? "🔄 Pedido Restaurado" : "💰 PIX Confirmado",
+          body: `Vendedor ${vendorUsername}: R$ ${Number(orderTotal).toFixed(2)}${wasRestored ? " (restaurado)" : ""}`,
+          tag: `pix-admin-manual-${orderId}`,
+          data: { url: "/", type: wasRestored ? "order_restored" : "pix_confirmed" },
+        }).catch(() => {});
+
+        // Add in-app notification for vendor
+        const vendorNotifs = await kv.get(`notifications:${vendorUsername}`) || [];
+        vendorNotifs.unshift({
+          id: `notif-${Date.now()}`,
+          type: wasRestored ? "order_restored" : "order_paid",
+          title: notifTitle,
+          message: notifBody + ` - Pedido #${orderId.slice(-6)}`,
+          createdAt: now,
+          read: false,
+        });
+        if (vendorNotifs.length > 100) vendorNotifs.length = 100;
+        await kv.set(`notifications:${vendorUsername}`, vendorNotifs);
+
+        // Notify CLIENT if order was restored from expiry
+        if (wasRestored) {
+          sendPushToUser(clientUsername, {
+            title: "🔄✅ Seu Pedido Foi Restaurado!",
+            body: `Seu pagamento de R$ ${Number(orderTotal).toFixed(2)} foi confirmado! O pedido foi restaurado.`,
+            tag: `order-restored-${orderId}`,
+            data: { url: "/", type: "order_restored", orderId },
+            vibrate: [200, 100, 200, 100, 200],
+          }).catch(() => {});
+
+          const clientNotifs = await kv.get(`notifications:${clientUsername}`) || [];
+          clientNotifs.unshift({
+            id: `notif-restored-manual-${Date.now()}`,
+            type: "order_restored",
+            title: "🔄 Pedido Restaurado!",
+            message: `Seu pagamento PIX de R$ ${Number(orderTotal).toFixed(2)} foi confirmado. O pedido #${orderId.slice(-6)} foi reativado!`,
+            createdAt: now,
+            read: false,
+          });
+          if (clientNotifs.length > 100) clientNotifs.length = 100;
+          await kv.set(`notifications:${clientUsername}`, clientNotifs);
+        }
+      } catch (e) { /* non-critical */ }
+    }
+
+    return c.json({ success: true, updated, message: updated ? "Pagamento confirmado em ambos os painéis" : "Pedido já estava atualizado" });
+  } catch (error) {
+    console.error("❌ Erro ao confirmar pagamento:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });
@@ -2678,61 +3023,251 @@ app.post("/make-server-42377006/pixwave/webhook", async (c) => {
       await kv.set("pixwave:invoices", invoiceList);
     }
 
-    if (event === "PAYMENT_CONFIRMED" && localInvoice?.localMetadata?.orderId) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // PAYMENT_CONFIRMED — Handles ALL payment types (orders + direct sales)
+    // Works even if user closed page, even if PIX timer expired first!
+    // ═══════════════════════════════════════════════════════════════════════
+    if (event === "PAYMENT_CONFIRMED" && localInvoice) {
+      const paidAt = invoiceData.paidAt || new Date().toISOString();
+      const payerName = paymentData?.payerName || "";
+      const amount = localInvoice.amount || invoiceData.price || invoiceData.amount || 0;
+
+      // ─── CASE A: Order-based payment (client purchase) ───
+      if (localInvoice.localMetadata?.orderId) {
+        const orderId = localInvoice.localMetadata.orderId;
+        const vendorUsername = localInvoice.localMetadata.vendorUsername;
+        const clientUsername = localInvoice.localMetadata.clientUsername;
+        let wasRestored = false;
+
+        // Update vendor orders — handles pending_payment AND cancelled (expired PIX restored)
+        if (vendorUsername) {
+          const vendorOrders = (await kv.get(`orders:vendor:${vendorUsername}`)) || [];
+          const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+          if (vIdx !== -1) {
+            const prevStatus = vendorOrders[vIdx].status;
+            vendorOrders[vIdx].paymentStatus = "paid";
+            vendorOrders[vIdx].pixPaidAt = paidAt;
+            vendorOrders[vIdx].pixPayerName = payerName;
+            // Move to pending if was pending_payment
+            if (prevStatus === "pending_payment") {
+              vendorOrders[vIdx].status = "pending";
+              vendorOrders[vIdx].updatedAt = new Date().toISOString();
+            } else if (prevStatus === "cancelled" && (vendorOrders[vIdx].cancelReason === "pix_expired" || vendorOrders[vIdx].cancelReason === "pix_cancelled")) {
+              // PIX expired/cancelled earlier but payment actually went through — RESTORE!
+              vendorOrders[vIdx].status = "pending";
+              vendorOrders[vIdx].cancelReason = null;
+              vendorOrders[vIdx].restoredFromExpiry = true;
+              vendorOrders[vIdx].restoredAt = new Date().toISOString();
+              vendorOrders[vIdx].updatedAt = new Date().toISOString();
+              wasRestored = true;
+              console.log(`🔄 RESTORED vendor order ${orderId} from ${prevStatus} → pending (payment confirmed after expiry)`);
+            }
+            await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+            console.log(`✅ Vendor order ${orderId} marked as paid via PIX (prev: ${prevStatus})`);
+          }
+        }
+
+        // Update client orders — same restore logic
+        if (clientUsername) {
+          const clientOrders = (await kv.get(`orders:client:${clientUsername}`)) || [];
+          const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+          if (cIdx !== -1) {
+            const prevStatus = clientOrders[cIdx].status;
+            clientOrders[cIdx].paymentStatus = "paid";
+            clientOrders[cIdx].pixPaidAt = paidAt;
+            clientOrders[cIdx].pixPayerName = payerName;
+            if (prevStatus === "pending_payment") {
+              clientOrders[cIdx].status = "pending";
+              clientOrders[cIdx].updatedAt = new Date().toISOString();
+            } else if (prevStatus === "cancelled" && (clientOrders[cIdx].cancelReason === "pix_expired" || clientOrders[cIdx].cancelReason === "pix_cancelled")) {
+              clientOrders[cIdx].status = "pending";
+              clientOrders[cIdx].cancelReason = null;
+              clientOrders[cIdx].restoredFromExpiry = true;
+              clientOrders[cIdx].restoredAt = new Date().toISOString();
+              clientOrders[cIdx].updatedAt = new Date().toISOString();
+              wasRestored = true;
+              console.log(`🔄 RESTORED client order ${orderId} from ${prevStatus} → pending (payment confirmed after expiry)`);
+            }
+            await kv.set(`orders:client:${clientUsername}`, clientOrders);
+            console.log(`✅ Client order ${orderId} marked as paid via PIX (prev: ${prevStatus})`);
+          }
+        }
+
+        // Notify vendor
+        if (vendorUsername && clientUsername) {
+          try {
+            const client = await kv.get(`user:${clientUsername}`);
+            const clientName = client?.name || clientUsername;
+            const notifTitle = wasRestored ? "🔄💰 Pedido Restaurado — PIX Confirmado!" : "🛒💰 Novo Pedido Pago!";
+            const notifBody = wasRestored
+              ? `${clientName} pagou R$ ${Number(amount).toFixed(2)} — pedido expirado foi restaurado!`
+              : `${clientName} pagou R$ ${Number(amount).toFixed(2)} via PIX!`;
+
+            sendPushToUser(vendorUsername, {
+              title: notifTitle,
+              body: notifBody,
+              tag: `order-paid-${orderId}`,
+              data: { url: "/", type: wasRestored ? "order_restored" : "order_paid", orderId },
+              vibrate: [300, 100, 300, 100, 300],
+            }).catch(() => {});
+
+            const vendorNotifs = await kv.get(`notifications:${vendorUsername}`) || [];
+            vendorNotifs.unshift({
+              id: `notif-wh-${Date.now()}`,
+              type: wasRestored ? "order_restored" : "order_paid",
+              title: notifTitle,
+              message: notifBody + ` - Pedido #${orderId.slice(-6)}`,
+              createdAt: new Date().toISOString(),
+              read: false,
+            });
+            if (vendorNotifs.length > 100) vendorNotifs.length = 100;
+            await kv.set(`notifications:${vendorUsername}`, vendorNotifs);
+          } catch (e) { /* non-critical */ }
+        }
+
+        // Notify CLIENT if order was restored from expiry
+        if (wasRestored && clientUsername) {
+          try {
+            sendPushToUser(clientUsername, {
+              title: "🔄✅ Seu Pedido Foi Restaurado!",
+              body: `Seu pagamento de R$ ${Number(amount).toFixed(2)} foi confirmado! O pedido que havia expirado foi restaurado com sucesso.`,
+              tag: `order-restored-${clientUsername}`,
+              data: { url: "/", type: "order_restored", orderId },
+              vibrate: [200, 100, 200, 100, 200],
+            }).catch(() => {});
+
+            const clientNotifs = await kv.get(`notifications:${clientUsername}`) || [];
+            clientNotifs.unshift({
+              id: `notif-restored-${Date.now()}`,
+              type: "order_restored",
+              title: "🔄 Pedido Restaurado!",
+              message: `Seu pagamento PIX de R$ ${Number(amount).toFixed(2)} foi confirmado. O pedido #${orderId.slice(-6)} foi reativado!`,
+              createdAt: new Date().toISOString(),
+              read: false,
+            });
+            if (clientNotifs.length > 100) clientNotifs.length = 100;
+            await kv.set(`notifications:${clientUsername}`, clientNotifs);
+          } catch (e) { /* non-critical */ }
+        }
+      }
+
+      // ─── CASE B: Direct PIX sale (vendor generated PIX) ───
+      // Registers the sale even if vendor closed the page!
+      if (localInvoice.localMetadata?.type === "direct_sale" && localInvoice.localMetadata?.vendorUsername) {
+        const vendorUsername = localInvoice.localMetadata.vendorUsername;
+        const saleAmount = Number(amount);
+        const invoiceId = invoiceData.id;
+
+        // Check if sale already registered (by frontend polling) — avoid duplicates
+        const existingSales = (await kv.get(`pix_direct_sales:${vendorUsername}`)) || [];
+        const alreadyRegistered = existingSales.some((s: any) => s.invoiceId === invoiceId);
+
+        if (!alreadyRegistered) {
+          const sale = {
+            id: `pix-sale-wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            vendorUsername,
+            amount: saleAmount,
+            invoiceId,
+            description: localInvoice.localMetadata.description || invoiceData.description || "Venda direta PIX (webhook)",
+            paidAt,
+            createdAt: new Date().toISOString(),
+            registeredVia: "webhook",
+          };
+          existingSales.push(sale);
+          await kv.set(`pix_direct_sales:${vendorUsername}`, existingSales);
+          console.log(`✅ [WEBHOOK] Venda direta PIX registrada: R$${saleAmount} para ${vendorUsername} (invoice ${invoiceId})`);
+
+          // Notify vendor
+          try {
+            sendPushToUser(vendorUsername, {
+              title: "💰 Venda PIX Confirmada!",
+              body: `Pagamento de R$ ${saleAmount.toFixed(2)} recebido via PIX!`,
+              tag: `direct-pix-${invoiceId}`,
+              data: { url: "/", type: "direct_pix_confirmed", invoiceId },
+              vibrate: [300, 100, 300],
+            }).catch(() => {});
+
+            const vendorNotifs = await kv.get(`notifications:${vendorUsername}`) || [];
+            vendorNotifs.unshift({
+              id: `notif-dpix-wh-${Date.now()}`,
+              type: "direct_pix_paid",
+              title: "💰 Venda PIX Confirmada!",
+              message: `Pagamento de R$ ${saleAmount.toFixed(2)} recebido — ${sale.description}`,
+              createdAt: new Date().toISOString(),
+              read: false,
+            });
+            if (vendorNotifs.length > 100) vendorNotifs.length = 100;
+            await kv.set(`notifications:${vendorUsername}`, vendorNotifs);
+          } catch (e) { /* non-critical */ }
+        } else {
+          console.log(`ℹ️ [WEBHOOK] Venda direta PIX já registrada (polling foi mais rápido): invoice ${invoiceId}`);
+        }
+      }
+    }
+
+    // ═══ INVOICE_EXPIRED / PAYMENT_CANCELLED → Cancel the order on BOTH sides ═══
+    // NOTE: If PAYMENT_CONFIRMED arrives later, the order will be RESTORED above
+    if ((event === "INVOICE_EXPIRED" || event === "PAYMENT_CANCELLED") && localInvoice?.localMetadata?.orderId) {
       const orderId = localInvoice.localMetadata.orderId;
       const vendorUsername = localInvoice.localMetadata.vendorUsername;
       const clientUsername = localInvoice.localMetadata.clientUsername;
-      const paidAt = invoiceData.paidAt || new Date().toISOString();
-      const payerName = paymentData?.payerName || "";
+      const cancelReason = event === "INVOICE_EXPIRED" ? "pix_expired" : "pix_cancelled";
+      const now = new Date().toISOString();
+      console.log(`🚫 Webhook ${event} → Cancelling order ${orderId} (may be restored if payment confirms later)`);
 
-      // Update vendor orders
+      // Cancel on vendor side
       if (vendorUsername) {
-        const vendorOrders = (await kv.get(`orders:vendor:${vendorUsername}`)) || [];
-        const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
-        if (vIdx !== -1) {
-          vendorOrders[vIdx].paymentStatus = "paid";
-          vendorOrders[vIdx].pixPaidAt = paidAt;
-          vendorOrders[vIdx].pixPayerName = payerName;
-          // If was pending_payment (client purchase), move to pending
-          if (vendorOrders[vIdx].status === "pending_payment") {
-            vendorOrders[vIdx].status = "pending";
-            vendorOrders[vIdx].updatedAt = new Date().toISOString();
-          }
-          await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
-          console.log(`✅ Vendor order ${orderId} marked as paid via PIX`);
+        const vOrds = (await kv.get(`orders:vendor:${vendorUsername}`)) || [];
+        const vi = vOrds.findIndex((o: any) => o.id === orderId);
+        if (vi !== -1 && vOrds[vi].status === "pending_payment") {
+          vOrds[vi].status = "cancelled";
+          vOrds[vi].cancelReason = cancelReason;
+          vOrds[vi].paymentStatus = event === "INVOICE_EXPIRED" ? "expired" : "cancelled";
+          vOrds[vi].updatedAt = now;
+          await kv.set(`orders:vendor:${vendorUsername}`, vOrds);
+          console.log(`✅ Vendor order ${orderId} cancelled via webhook (${cancelReason})`);
         }
       }
 
-      // Update client orders
+      // Cancel on client side
       if (clientUsername) {
-        const clientOrders = (await kv.get(`orders:client:${clientUsername}`)) || [];
-        const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
-        if (cIdx !== -1) {
-          clientOrders[cIdx].paymentStatus = "paid";
-          clientOrders[cIdx].pixPaidAt = paidAt;
-          clientOrders[cIdx].pixPayerName = payerName;
-          if (clientOrders[cIdx].status === "pending_payment") {
-            clientOrders[cIdx].status = "pending";
-            clientOrders[cIdx].updatedAt = new Date().toISOString();
-          }
-          await kv.set(`orders:client:${clientUsername}`, clientOrders);
-          console.log(`✅ Client order ${orderId} marked as paid via PIX`);
+        const cOrds = (await kv.get(`orders:client:${clientUsername}`)) || [];
+        const ci = cOrds.findIndex((o: any) => o.id === orderId);
+        if (ci !== -1 && cOrds[ci].status === "pending_payment") {
+          cOrds[ci].status = "cancelled";
+          cOrds[ci].cancelReason = cancelReason;
+          cOrds[ci].paymentStatus = event === "INVOICE_EXPIRED" ? "expired" : "cancelled";
+          cOrds[ci].updatedAt = now;
+          await kv.set(`orders:client:${clientUsername}`, cOrds);
+          console.log(`✅ Client order ${orderId} cancelled via webhook (${cancelReason})`);
         }
       }
 
-      // Notify vendor about paid client order
-      if (vendorUsername && clientUsername) {
+      // Notify client about cancellation
+      if (clientUsername) {
         try {
-          const client = await kv.get(`user:${clientUsername}`);
-          const clientName = client?.name || clientUsername;
-          const amount = localInvoice.amount || invoiceData.price || 0;
-          sendPushToUser(vendorUsername, {
-            title: "🛒💰 Novo Pedido Pago!",
-            body: `${clientName} pagou R$ ${Number(amount).toFixed(2)} via PIX!`,
-            tag: `order-paid-${orderId}`,
-            data: { url: "/", type: "order_paid", orderId },
-            vibrate: [300, 100, 300, 100, 300],
+          const cancelMsg = event === "INVOICE_EXPIRED"
+            ? "Seu PIX expirou. O pedido foi cancelado automaticamente."
+            : "Pagamento PIX cancelado. O pedido foi cancelado.";
+          sendPushToUser(clientUsername, {
+            title: "❌ Pedido Cancelado",
+            body: cancelMsg,
+            tag: `order-cancel-${orderId}`,
+            data: { url: "/", type: "order_cancelled", orderId },
+            vibrate: [200, 100, 200],
           }).catch(() => {});
+
+          const clientNotifs = await kv.get(`notifications:${clientUsername}`) || [];
+          clientNotifs.unshift({
+            id: `notif-wh-cancel-${Date.now()}`,
+            type: "order_cancelled",
+            title: "Pedido Cancelado",
+            message: cancelMsg,
+            createdAt: now,
+            read: false,
+          });
+          if (clientNotifs.length > 100) clientNotifs.length = 100;
+          await kv.set(`notifications:${clientUsername}`, clientNotifs);
         } catch (e) { /* non-critical */ }
       }
     }
@@ -2807,6 +3342,15 @@ app.post("/make-server-42377006/pix-direct-sale", async (c) => {
     if (!user || user.role !== "vendedor") {
       return c.json({ success: false, error: "Vendedor não encontrado" }, 404);
     }
+
+    // Check if webhook already registered this sale — avoid duplicates
+    const sales = (await kv.get(`pix_direct_sales:${vendorUsername}`)) || [];
+    const alreadyRegistered = sales.some((s: any) => s.invoiceId === invoiceId);
+    if (alreadyRegistered) {
+      console.log(`ℹ️ Venda direta PIX já registrada pelo webhook: invoice ${invoiceId}`);
+      return c.json({ success: true, sale: sales.find((s: any) => s.invoiceId === invoiceId), alreadyRegistered: true });
+    }
+
     const sale = {
       id: `pix-sale-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       vendorUsername,
@@ -2815,11 +3359,11 @@ app.post("/make-server-42377006/pix-direct-sale", async (c) => {
       description: description || "Venda direta PIX",
       paidAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
+      registeredVia: "polling",
     };
-    const sales = (await kv.get(`pix_direct_sales:${vendorUsername}`)) || [];
     sales.push(sale);
     await kv.set(`pix_direct_sales:${vendorUsername}`, sales);
-    console.log(`✅ Venda direta PIX registrada: R$${amount} para ${vendorUsername}`);
+    console.log(`✅ Venda direta PIX registrada (polling): R$${amount} para ${vendorUsername}`);
     return c.json({ success: true, sale });
   } catch (error) {
     console.error("❌ Erro ao registrar venda direta PIX:", error);
@@ -3924,8 +4468,21 @@ app.get("/make-server-42377006/vendor-wallet/withdrawals/:username", async (c) =
 app.get("/make-server-42377006/admin/withdrawal-requests", async (c) => {
   try {
     const requests = await kv.get("admin:withdrawal_requests") || [];
-    requests.sort((a: any, b: any) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
-    return c.json({ success: true, requests });
+    // Auto-clean: remove withdrawal requests from deleted vendors
+    const origLen = requests.length;
+    const validRequests: any[] = [];
+    for (const r of requests) {
+      if (r.vendorUsername) {
+        const vendorUser = await kv.get(`user:${r.vendorUsername}`);
+        if (!vendorUser) continue; // vendor was deleted
+      }
+      validRequests.push(r);
+    }
+    if (validRequests.length !== origLen) {
+      await kv.set("admin:withdrawal_requests", validRequests);
+    }
+    validRequests.sort((a: any, b: any) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+    return c.json({ success: true, requests: validRequests });
   } catch (error) {
     console.error("Erro ao buscar solicitações de saque:", error);
     return c.json({ success: false, error: String(error) }, 500);
@@ -4039,6 +4596,592 @@ app.post("/make-server-42377006/inapp-notifications/mark-read", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     console.error("Erro ao mark-read inapp notifications:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== CLIENT ORDER CANCELLATION ====================
+app.post("/make-server-42377006/orders/:orderId/cancel", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { clientUsername, vendorUsername, reason } = await c.req.json();
+    console.log(`❌ Client cancel request: order ${orderId} by ${clientUsername}`);
+
+    if (!orderId || !clientUsername || !vendorUsername) {
+      return c.json({ success: false, error: "orderId, clientUsername e vendorUsername obrigatórios" }, 400);
+    }
+
+    const now = new Date().toISOString();
+
+    // Update client orders
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx === -1) {
+      return c.json({ success: false, error: "Pedido não encontrado" }, 404);
+    }
+
+    const order = clientOrders[cIdx];
+    if (!["pending_payment", "pending"].includes(order.status)) {
+      return c.json({ success: false, error: "Este pedido não pode mais ser cancelado pois já foi aceito pelo vendedor" }, 400);
+    }
+
+    clientOrders[cIdx].status = "cancelled";
+    clientOrders[cIdx].cancelReason = reason || "cancelled_by_client";
+    clientOrders[cIdx].cancelledBy = "client";
+    clientOrders[cIdx].cancelledAt = now;
+    clientOrders[cIdx].updatedAt = now;
+    await kv.set(`orders:client:${clientUsername}`, clientOrders);
+
+    // Update vendor orders
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx !== -1) {
+      vendorOrders[vIdx].status = "cancelled";
+      vendorOrders[vIdx].cancelReason = reason || "cancelled_by_client";
+      vendorOrders[vIdx].cancelledBy = "client";
+      vendorOrders[vIdx].cancelledAt = now;
+      vendorOrders[vIdx].updatedAt = now;
+      await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+    }
+
+    // Notify vendor
+    try {
+      const client = await kv.get(`user:${clientUsername}`);
+      const clientName = client?.name || clientUsername;
+      sendPushToUser(vendorUsername, {
+        title: "❌ Pedido Cancelado",
+        body: `${clientName} cancelou o pedido #${orderId.slice(-6)}`,
+        tag: `order-cancel-${orderId}`,
+        data: { url: "/", type: "order_cancelled", orderId },
+      }).catch(() => {});
+
+      const vendorNotifKey = `inapp_notif:vendedor:${vendorUsername}`;
+      const vendorNotifs = await kv.get(vendorNotifKey) || [];
+      vendorNotifs.unshift({
+        id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: "Pedido Cancelado pelo Cliente",
+        body: `${clientName} cancelou o pedido #${orderId.slice(-6)} (R$ ${Number(order.total).toFixed(2)})${reason ? ` — Motivo: ${reason}` : ""}`,
+        type: "order_cancelled",
+        timestamp: now,
+        read: false,
+      });
+      if (vendorNotifs.length > 50) vendorNotifs.length = 50;
+      await kv.set(vendorNotifKey, vendorNotifs);
+    } catch (e) { /* non-critical */ }
+
+    console.log(`✅ Order ${orderId} cancelled by client ${clientUsername}`);
+    return c.json({ success: true, message: "Pedido cancelado com sucesso" });
+  } catch (error) {
+    console.error("❌ Erro ao cancelar pedido:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== VENDOR ORDER REJECTION ====================
+app.post("/make-server-42377006/orders/:orderId/reject", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { vendorUsername, clientUsername, reason, refundRequested } = await c.req.json();
+    console.log(`🚫 Vendor reject: order ${orderId} by ${vendorUsername}${refundRequested ? " (REFUND REQUESTED)" : ""}`);
+
+    if (!orderId || !vendorUsername || !clientUsername) {
+      return c.json({ success: false, error: "orderId, vendorUsername e clientUsername obrigatórios" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    const isRefund = !!refundRequested;
+
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx === -1) return c.json({ success: false, error: "Pedido não encontrado" }, 404);
+
+    const order = vendorOrders[vIdx];
+    if (!["pending", "pending_payment"].includes(order.status)) {
+      return c.json({ success: false, error: "Este pedido não pode mais ser rejeitado" }, 400);
+    }
+
+    vendorOrders[vIdx].status = "cancelled";
+    vendorOrders[vIdx].cancelReason = reason || (isRefund ? "refund_by_vendor" : "rejected_by_vendor");
+    vendorOrders[vIdx].cancelledBy = "vendor";
+    vendorOrders[vIdx].rejectedAt = now;
+    vendorOrders[vIdx].updatedAt = now;
+    if (isRefund) {
+      vendorOrders[vIdx].refundStatus = "awaiting_client_details";
+      vendorOrders[vIdx].refundRequestedAt = now;
+    }
+    await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx !== -1) {
+      clientOrders[cIdx].status = "cancelled";
+      clientOrders[cIdx].cancelReason = reason || (isRefund ? "refund_by_vendor" : "rejected_by_vendor");
+      clientOrders[cIdx].cancelledBy = "vendor";
+      clientOrders[cIdx].rejectedAt = now;
+      clientOrders[cIdx].updatedAt = now;
+      if (isRefund) {
+        clientOrders[cIdx].refundStatus = "awaiting_client_details";
+        clientOrders[cIdx].refundRequestedAt = now;
+      }
+      await kv.set(`orders:client:${clientUsername}`, clientOrders);
+    }
+
+    try {
+      const vendor = await kv.get(`user:${vendorUsername}`);
+      const vendorName = vendor?.name || vendorUsername;
+      const pushTitle = isRefund ? "🔄💰 Pedido Cancelado — Preencha seus dados para reembolso!" : "🚫 Pedido Recusado";
+      const pushBody = isRefund
+        ? `${vendorName} não aceitou seu pedido #${orderId.slice(-6)} de R$ ${Number(order.total).toFixed(2)}. Preencha seus dados bancários para receber o reembolso em até 24h!`
+        : `${vendorName} recusou seu pedido #${orderId.slice(-6)}${reason ? `: ${reason}` : ""}`;
+
+      sendPushToUser(clientUsername, {
+        title: pushTitle,
+        body: pushBody,
+        tag: `order-reject-${orderId}`,
+        data: { url: "/", type: isRefund ? "order_refund" : "order_rejected", orderId },
+        vibrate: [200, 100, 200, 100, 200],
+      }).catch(() => {});
+
+      const clientNotifKey = `inapp_notif:cliente:${clientUsername}`;
+      const clientNotifs = await kv.get(clientNotifKey) || [];
+      clientNotifs.unshift({
+        id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: pushTitle,
+        body: pushBody,
+        type: isRefund ? "order_refund" : "order_rejected",
+        timestamp: now,
+        read: false,
+      });
+      if (clientNotifs.length > 50) clientNotifs.length = 50;
+      await kv.set(clientNotifKey, clientNotifs);
+    } catch (e) { /* non-critical */ }
+
+    console.log(`✅ Order ${orderId} rejected by vendor ${vendorUsername}${isRefund ? " — AWAITING CLIENT REFUND DETAILS" : ""}`);
+    return c.json({ success: true, message: isRefund ? "Pedido cancelado — aguardando dados do cliente" : "Pedido rejeitado" });
+  } catch (error) {
+    console.error("❌ Erro ao rejeitar pedido:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== CLIENT SUBMITS REFUND BANK DETAILS ====================
+app.post("/make-server-42377006/orders/:orderId/refund-details", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { clientUsername, vendorUsername, pixKeyType, pixKey, holderName } = await c.req.json();
+    console.log(`💳 Client refund details: order ${orderId} by ${clientUsername}`);
+
+    if (!orderId || !clientUsername || !vendorUsername || !pixKey || !holderName) {
+      return c.json({ success: false, error: "Todos os campos são obrigatórios" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    const bankDetails = { pixKeyType: pixKeyType || "cpf", pixKey, holderName };
+
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx === -1) return c.json({ success: false, error: "Pedido não encontrado" }, 404);
+    if (clientOrders[cIdx].refundStatus !== "awaiting_client_details") {
+      return c.json({ success: false, error: "Este pedido não está aguardando dados de reembolso" }, 400);
+    }
+    clientOrders[cIdx].refundStatus = "awaiting_vendor_transfer";
+    clientOrders[cIdx].refundBankDetails = bankDetails;
+    clientOrders[cIdx].refundDetailsSubmittedAt = now;
+    clientOrders[cIdx].updatedAt = now;
+    await kv.set(`orders:client:${clientUsername}`, clientOrders);
+
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx !== -1) {
+      vendorOrders[vIdx].refundStatus = "awaiting_vendor_transfer";
+      vendorOrders[vIdx].refundBankDetails = bankDetails;
+      vendorOrders[vIdx].refundDetailsSubmittedAt = now;
+      vendorOrders[vIdx].updatedAt = now;
+      await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+    }
+
+    try {
+      const client = await kv.get(`user:${clientUsername}`);
+      const clientName = client?.name || clientUsername;
+      sendPushToUser(vendorUsername, {
+        title: "💳 Dados Bancários Recebidos!",
+        body: `${clientName} enviou os dados para reembolso do pedido #${orderId.slice(-6)} — R$ ${Number(clientOrders[cIdx].total).toFixed(2)}. Realize a transferência!`,
+        tag: `refund-details-${orderId}`,
+        data: { url: "/vendedor", type: "refund_details_received", orderId },
+        vibrate: [200, 100, 200],
+      }).catch(() => {});
+
+      const vendorNotifKey = `inapp_notif:vendedor:${vendorUsername}`;
+      const vendorNotifs = await kv.get(vendorNotifKey) || [];
+      vendorNotifs.unshift({
+        id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: "💳 Dados Bancários Recebidos",
+        body: `${clientName} enviou dados para reembolso do pedido #${orderId.slice(-6)}. Realize a transferência PIX e confirme!`,
+        type: "refund_details_received",
+        timestamp: now,
+        read: false,
+      });
+      if (vendorNotifs.length > 50) vendorNotifs.length = 50;
+      await kv.set(vendorNotifKey, vendorNotifs);
+    } catch (e) { /* non-critical */ }
+
+    console.log(`✅ Client ${clientUsername} submitted refund details for order ${orderId}`);
+    return c.json({ success: true, message: "Dados enviados! O reembolso será feito em até 24 horas." });
+  } catch (error) {
+    console.error("❌ Erro ao enviar dados de reembolso:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== VENDOR CONFIRMS REFUND COMPLETED ====================
+app.post("/make-server-42377006/orders/:orderId/refund-complete", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { vendorUsername, clientUsername } = await c.req.json();
+    console.log(`✅ Vendor confirms refund complete: order ${orderId} by ${vendorUsername}`);
+
+    if (!orderId || !vendorUsername || !clientUsername) {
+      return c.json({ success: false, error: "orderId, vendorUsername e clientUsername obrigatórios" }, 400);
+    }
+
+    const now = new Date().toISOString();
+
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx === -1) return c.json({ success: false, error: "Pedido não encontrado" }, 404);
+    if (vendorOrders[vIdx].refundStatus !== "awaiting_vendor_transfer") {
+      return c.json({ success: false, error: "Este pedido não está aguardando confirmação de reembolso" }, 400);
+    }
+    vendorOrders[vIdx].refundStatus = "completed";
+    vendorOrders[vIdx].refundCompletedAt = now;
+    vendorOrders[vIdx].updatedAt = now;
+    await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx !== -1) {
+      clientOrders[cIdx].refundStatus = "completed";
+      clientOrders[cIdx].refundCompletedAt = now;
+      clientOrders[cIdx].updatedAt = now;
+      await kv.set(`orders:client:${clientUsername}`, clientOrders);
+    }
+
+    try {
+      const vendor = await kv.get(`user:${vendorUsername}`);
+      const vendorName = vendor?.name || vendorUsername;
+      const total = vendorOrders[vIdx].total || 0;
+      sendPushToUser(clientUsername, {
+        title: "✅💰 Reembolso Concluído com Sucesso!",
+        body: `${vendorName} confirmou o reembolso de R$ ${Number(total).toFixed(2)} do pedido #${orderId.slice(-6)}. Verifique sua conta!`,
+        tag: `refund-complete-${orderId}`,
+        data: { url: "/", type: "refund_completed", orderId },
+        vibrate: [200, 100, 200, 100, 200],
+      }).catch(() => {});
+
+      const clientNotifKey = `inapp_notif:cliente:${clientUsername}`;
+      const clientNotifs = await kv.get(clientNotifKey) || [];
+      clientNotifs.unshift({
+        id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: "✅💰 Reembolso Concluído com Sucesso!",
+        body: `Seu reembolso de R$ ${Number(total).toFixed(2)} do pedido #${orderId.slice(-6)} foi realizado com sucesso!`,
+        type: "refund_completed",
+        timestamp: now,
+        read: false,
+      });
+      if (clientNotifs.length > 50) clientNotifs.length = 50;
+      await kv.set(clientNotifKey, clientNotifs);
+    } catch (e) { /* non-critical */ }
+
+    console.log(`✅ Refund COMPLETED for order ${orderId} by vendor ${vendorUsername}`);
+    return c.json({ success: true, message: "Reembolso concluído com sucesso!" });
+  } catch (error) {
+    console.error("❌ Erro ao confirmar reembolso:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== ORDER RATING SYSTEM ====================
+app.post("/make-server-42377006/orders/:orderId/rate", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { clientUsername, vendorUsername, driverUsername, rating, comment } = await c.req.json();
+    console.log(`⭐ Rating: order ${orderId}, stars=${rating}`);
+
+    if (!orderId || !clientUsername || !rating) {
+      return c.json({ success: false, error: "orderId, clientUsername e rating obrigatórios" }, 400);
+    }
+
+    const stars = Math.min(5, Math.max(1, Math.round(Number(rating))));
+    const now = new Date().toISOString();
+
+    const ratingData = {
+      orderId,
+      clientUsername,
+      vendorUsername: vendorUsername || null,
+      driverUsername: driverUsername || null,
+      stars,
+      comment: comment || "",
+      createdAt: now,
+    };
+
+    await kv.set(`rating:${orderId}`, ratingData);
+
+    // Update order in both client and vendor lists
+    if (clientUsername) {
+      const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+      const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+      if (cIdx !== -1) {
+        clientOrders[cIdx].rating = stars;
+        clientOrders[cIdx].ratingComment = comment || "";
+        clientOrders[cIdx].ratedAt = now;
+        await kv.set(`orders:client:${clientUsername}`, clientOrders);
+      }
+    }
+
+    if (vendorUsername) {
+      const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+      const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+      if (vIdx !== -1) {
+        vendorOrders[vIdx].rating = stars;
+        vendorOrders[vIdx].ratingComment = comment || "";
+        vendorOrders[vIdx].ratedAt = now;
+        await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+      }
+
+      const vendorRatings = await kv.get(`ratings:vendor:${vendorUsername}`) || [];
+      vendorRatings.push(ratingData);
+      await kv.set(`ratings:vendor:${vendorUsername}`, vendorRatings);
+
+      try {
+        const client = await kv.get(`user:${clientUsername}`);
+        const clientName = client?.name || clientUsername;
+        const starEmoji = "⭐".repeat(stars);
+        sendPushToUser(vendorUsername, {
+          title: `${starEmoji} Avaliação Recebida`,
+          body: `${clientName} avaliou pedido #${orderId.slice(-6)} com ${stars} estrela(s)${comment ? `: "${comment}"` : ""}`,
+          tag: `rating-${orderId}`,
+          data: { url: "/", type: "rating_received", orderId },
+        }).catch(() => {});
+
+        const vendorNotifKey = `inapp_notif:vendedor:${vendorUsername}`;
+        const vendorNotifs = await kv.get(vendorNotifKey) || [];
+        vendorNotifs.unshift({
+          id: `sn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: "Nova Avaliação",
+          body: `${clientName} deu ${stars} estrela(s) ao pedido #${orderId.slice(-6)}${comment ? ` — "${comment}"` : ""}`,
+          type: "rating_received",
+          timestamp: now,
+          read: false,
+        });
+        if (vendorNotifs.length > 50) vendorNotifs.length = 50;
+        await kv.set(vendorNotifKey, vendorNotifs);
+      } catch (e) { /* non-critical */ }
+    }
+
+    if (driverUsername) {
+      const driverRatings = await kv.get(`ratings:driver:${driverUsername}`) || [];
+      driverRatings.push(ratingData);
+      await kv.set(`ratings:driver:${driverUsername}`, driverRatings);
+
+      const driverOrders = await kv.get(`orders:driver:${driverUsername}`) || [];
+      const dIdx = driverOrders.findIndex((o: any) => o.id === orderId);
+      if (dIdx !== -1) {
+        driverOrders[dIdx].rating = stars;
+        driverOrders[dIdx].ratingComment = comment || "";
+        driverOrders[dIdx].ratedAt = now;
+        await kv.set(`orders:driver:${driverUsername}`, driverOrders);
+      }
+    }
+
+    console.log(`✅ Rating saved: ${stars} stars for order ${orderId}`);
+    return c.json({ success: true, rating: ratingData });
+  } catch (error) {
+    console.error("❌ Erro ao salvar avaliação:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get vendor average rating
+app.get("/make-server-42377006/ratings/vendor/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const ratings = await kv.get(`ratings:vendor:${username}`) || [];
+    if (ratings.length === 0) {
+      return c.json({ success: true, average: 0, total: 0, ratings: [] });
+    }
+    const sum = ratings.reduce((acc: number, r: any) => acc + (r.stars || 0), 0);
+    const avg = sum / ratings.length;
+    return c.json({
+      success: true,
+      average: Math.round(avg * 10) / 10,
+      total: ratings.length,
+      ratings: ratings.slice(-50).reverse(),
+    });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// Get driver average rating
+app.get("/make-server-42377006/ratings/driver/:username", async (c) => {
+  try {
+    const username = c.req.param("username");
+    const ratings = await kv.get(`ratings:driver:${username}`) || [];
+    if (ratings.length === 0) {
+      return c.json({ success: true, average: 0, total: 0, ratings: [] });
+    }
+    const sum = ratings.reduce((acc: number, r: any) => acc + (r.stars || 0), 0);
+    const avg = sum / ratings.length;
+    return c.json({
+      success: true,
+      average: Math.round(avg * 10) / 10,
+      total: ratings.length,
+      ratings: ratings.slice(-50).reverse(),
+    });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== DRIVER REJECT DELIVERY ====================
+app.post("/make-server-42377006/orders/:orderId/driver-reject", async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const { driverUsername, vendorUsername, clientUsername, reason } = await c.req.json();
+    console.log(`🚫 Driver reject delivery: order ${orderId} by ${driverUsername}, reason: ${reason}`);
+    const now = new Date().toISOString();
+
+    // Update driver orders — mark rejected
+    const driverOrders = await kv.get(`orders:driver:${driverUsername}`) || [];
+    const dIdx = driverOrders.findIndex((o: any) => o.id === orderId);
+    if (dIdx !== -1) {
+      driverOrders[dIdx].status = "preparing";
+      driverOrders[dIdx].driverRejected = true;
+      driverOrders[dIdx].driverRejectReason = reason || "Recusado pelo motorista";
+      driverOrders[dIdx].driverRejectedAt = now;
+      driverOrders[dIdx].updatedAt = now;
+      await kv.set(`orders:driver:${driverUsername}`, driverOrders);
+    }
+
+    // Update vendor orders — revert to preparing so vendor can reassign
+    const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+    const vIdx = vendorOrders.findIndex((o: any) => o.id === orderId);
+    if (vIdx !== -1) {
+      vendorOrders[vIdx].status = "preparing";
+      vendorOrders[vIdx].driverUsername = null;
+      vendorOrders[vIdx].driverRejected = true;
+      vendorOrders[vIdx].driverRejectReason = reason || "Recusado pelo motorista";
+      vendorOrders[vIdx].driverRejectedAt = now;
+      vendorOrders[vIdx].updatedAt = now;
+      await kv.set(`orders:vendor:${vendorUsername}`, vendorOrders);
+    }
+
+    // Update client orders
+    const clientOrders = await kv.get(`orders:client:${clientUsername}`) || [];
+    const cIdx = clientOrders.findIndex((o: any) => o.id === orderId);
+    if (cIdx !== -1) {
+      clientOrders[cIdx].status = "preparing";
+      clientOrders[cIdx].driverUsername = null;
+      clientOrders[cIdx].driverRejected = true;
+      clientOrders[cIdx].driverRejectReason = reason || "Recusado pelo motorista";
+      clientOrders[cIdx].driverRejectedAt = now;
+      clientOrders[cIdx].updatedAt = now;
+      await kv.set(`orders:client:${clientUsername}`, clientOrders);
+    }
+
+    // Notify vendor
+    const vendorNotifKey = `inapp_notif:vendedor:${vendorUsername}`;
+    const vendorNotifs = await kv.get(vendorNotifKey) || [];
+    vendorNotifs.push({
+      id: `notif-${Date.now()}`,
+      type: "driver_rejected",
+      title: "Motorista recusou entrega",
+      body: `Motorista @${driverUsername} recusou pedido #${orderId.slice(-6).toUpperCase()}${reason ? `: ${reason}` : ""}. Atribua outro motorista.`,
+      timestamp: now,
+      read: false,
+    });
+    await kv.set(vendorNotifKey, vendorNotifs.slice(-100));
+
+    // Push to vendor
+    try {
+      await sendPushToUser(vendorUsername, {
+        title: "Motorista recusou entrega",
+        body: `@${driverUsername} recusou #${orderId.slice(-6).toUpperCase()}${reason ? `: ${reason}` : ""}`,
+        tag: `driver-reject-${orderId}`,
+        data: { url: "/vendedor" },
+      });
+    } catch {}
+
+    // Notify client
+    const clientNotifKey = `inapp_notif:cliente:${clientUsername}`;
+    const clientNotifs = await kv.get(clientNotifKey) || [];
+    clientNotifs.push({
+      id: `notif-${Date.now()}-c`,
+      type: "driver_changed",
+      title: "Motorista alterado",
+      body: `O motorista do pedido #${orderId.slice(-6).toUpperCase()} foi alterado. O vendedor esta buscando outro motorista.`,
+      timestamp: now,
+      read: false,
+    });
+    await kv.set(clientNotifKey, clientNotifs.slice(-100));
+
+    console.log(`✅ Driver ${driverUsername} rejected delivery ${orderId}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Erro ao rejeitar entrega pelo motorista:", error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// ==================== ADMIN: GET ALL ORDERS ====================
+app.get("/make-server-42377006/admin/orders", async (c) => {
+  try {
+    const vendorList = await kv.get("users:vendedor") || [];
+    const allOrders: any[] = [];
+
+    for (const vendorUsername of vendorList) {
+      const vendorOrders = await kv.get(`orders:vendor:${vendorUsername}`) || [];
+      for (const o of vendorOrders) {
+        // Skip orders from deleted clients
+        if (o.clientUsername) {
+          const clientUser = await kv.get(`user:${o.clientUsername}`);
+          if (!clientUser) continue;
+        }
+        // Auto-fix paid orders stuck on pending_payment
+        if (o.status === "pending_payment" && o.paymentStatus === "paid") {
+          o.status = "pending";
+        }
+        allOrders.push({ ...o, _vendorUsername: o.vendorUsername || vendorUsername });
+      }
+    }
+
+    allOrders.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const totalOrders = allOrders.length;
+    const activeOrders = allOrders.filter((o: any) => !["delivered", "cancelled"].includes(o.status)).length;
+    const deliveredOrders = allOrders.filter((o: any) => o.status === "delivered").length;
+    const cancelledOrders = allOrders.filter((o: any) => o.status === "cancelled").length;
+    const totalRevenue = allOrders.filter((o: any) => o.paymentStatus === "paid" && o.status !== "cancelled").reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const ratedOrders = allOrders.filter((o: any) => o.rating).length;
+    const avgRating = ratedOrders > 0
+      ? allOrders.filter((o: any) => o.rating).reduce((s: number, o: any) => s + o.rating, 0) / ratedOrders
+      : 0;
+
+    return c.json({
+      success: true,
+      orders: allOrders.slice(0, 200),
+      stats: {
+        totalOrders,
+        activeOrders,
+        deliveredOrders,
+        cancelledOrders,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        ratedOrders,
+        avgRating: Math.round(avgRating * 10) / 10,
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao buscar todos os pedidos admin:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
 });

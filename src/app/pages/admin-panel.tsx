@@ -37,6 +37,15 @@ import {
   Filter,
   Wallet,
   X,
+  Star,
+  Truck,
+  Package,
+  Eye,
+  MessageSquare,
+  Navigation,
+  Ban,
+  ChevronRight,
+  User,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import * as api from "../services/api";
@@ -129,7 +138,7 @@ function NeonAvatar({ photo, name, size = "md" }: { photo?: string; name?: strin
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ADMIN WITHDRAWAL REQUESTS COMPONENT
+// ADMIN WITHDRAWAL REQUESTS COMPONENT — Organized by Vendor
 // ═══════════════════════════════════════════════════════════════
 function AdminWithdrawalRequests() {
   const [requests, setRequests] = useState<any[]>([]);
@@ -137,35 +146,31 @@ function AdminWithdrawalRequests() {
   const [completing, setCompleting] = useState<string | null>(null);
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "completed">("all");
+  const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
   const [dateFilterStart, setDateFilterStart] = useState(() => {
-    const d = new Date(); d.setHours(0,0,0,0);
+    const d = new Date(); d.setDate(d.getDate() - 29);
     return d.toISOString().split("T")[0];
   });
   const [dateFilterEnd, setDateFilterEnd] = useState(() => new Date().toISOString().split("T")[0]);
-  const [datePreset, setDatePreset] = useState("hoje");
+  const [datePreset, setDatePreset] = useState("30dias");
 
   const applyPreset = (preset: string) => {
     setDatePreset(preset);
     const now = new Date();
     const today = now.toISOString().split("T")[0];
     if (preset === "hoje") {
-      setDateFilterStart(today);
-      setDateFilterEnd(today);
+      setDateFilterStart(today); setDateFilterEnd(today);
     } else if (preset === "7dias") {
       const d = new Date(now); d.setDate(d.getDate() - 6);
-      setDateFilterStart(d.toISOString().split("T")[0]);
-      setDateFilterEnd(today);
+      setDateFilterStart(d.toISOString().split("T")[0]); setDateFilterEnd(today);
     } else if (preset === "30dias") {
       const d = new Date(now); d.setDate(d.getDate() - 29);
-      setDateFilterStart(d.toISOString().split("T")[0]);
-      setDateFilterEnd(today);
+      setDateFilterStart(d.toISOString().split("T")[0]); setDateFilterEnd(today);
     } else if (preset === "mes") {
       const d = new Date(now.getFullYear(), now.getMonth(), 1);
-      setDateFilterStart(d.toISOString().split("T")[0]);
-      setDateFilterEnd(today);
+      setDateFilterStart(d.toISOString().split("T")[0]); setDateFilterEnd(today);
     } else if (preset === "tudo") {
-      setDateFilterStart("2020-01-01");
-      setDateFilterEnd(today);
+      setDateFilterStart("2020-01-01"); setDateFilterEnd(today);
     }
   };
 
@@ -173,11 +178,7 @@ function AdminWithdrawalRequests() {
     try {
       const res = await api.getAdminWithdrawalRequests();
       if (res.success) setRequests(res.requests || []);
-    } catch (err) {
-      console.error("Erro ao carregar solicitações de saque:", err);
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* silent */ } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadRequests(); }, [loadRequests]);
@@ -190,37 +191,59 @@ function AdminWithdrawalRequests() {
     setCompleting(withdrawalId);
     try {
       const res = await api.completeWithdrawal(withdrawalId);
-      if (res.success) {
-        sfx.playSuccess();
-        await loadRequests();
-      } else {
-        sfx.playError();
-      }
-    } catch (err) {
-      console.error("Erro ao completar saque:", err);
-      sfx.playError();
-    } finally {
-      setCompleting(null);
-    }
+      if (res.success) { sfx.playSuccess(); await loadRequests(); }
+      else sfx.playError();
+    } catch { sfx.playError(); } finally { setCompleting(null); }
   };
 
-  const filteredRequests = useMemo(() => {
+  // Filter by date range
+  const dateFiltered = useMemo(() => {
     return requests.filter((r) => {
-      if (statusFilter !== "all" && r.status !== statusFilter) return false;
       const d = (r.requestedAt || "").split("T")[0];
       return d >= dateFilterStart && d <= dateFilterEnd;
     });
-  }, [requests, statusFilter, dateFilterStart, dateFilterEnd]);
+  }, [requests, dateFilterStart, dateFilterEnd]);
 
-  const pendingCount = requests.filter(r => r.status === "pending").length;
-  const completedCount = requests.filter(r => r.status === "completed").length;
-  const pendingTotal = requests.filter(r => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+  // Group by vendor
+  const vendorGroups = useMemo(() => {
+    const map: Record<string, { vendorUsername: string; vendorName: string; requests: any[]; pendingCount: number; completedCount: number; pendingTotal: number; completedTotal: number; totalAmount: number; pixAddress: string }> = {};
+    for (const r of dateFiltered) {
+      const vk = r.vendorUsername || "desconhecido";
+      if (!map[vk]) {
+        map[vk] = { vendorUsername: vk, vendorName: r.vendorName || vk, requests: [], pendingCount: 0, completedCount: 0, pendingTotal: 0, completedTotal: 0, totalAmount: 0, pixAddress: r.pixAddress || "" };
+      }
+      map[vk].requests.push(r);
+      map[vk].totalAmount += r.amount || 0;
+      if (r.status === "pending") { map[vk].pendingCount++; map[vk].pendingTotal += r.amount || 0; }
+      else if (r.status === "completed") { map[vk].completedCount++; map[vk].completedTotal += r.amount || 0; }
+      if (r.pixAddress) map[vk].pixAddress = r.pixAddress;
+    }
+    // Sort: vendors with pending requests first, then by total amount
+    return Object.values(map).sort((a, b) => {
+      if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
+      if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
+      return b.totalAmount - a.totalAmount;
+    });
+  }, [dateFiltered]);
+
+  // Global stats from date-filtered
+  const globalPending = dateFiltered.filter(r => r.status === "pending").length;
+  const globalCompleted = dateFiltered.filter(r => r.status === "completed").length;
+  const globalPendingTotal = dateFiltered.filter(r => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+  const globalCompletedTotal = dateFiltered.filter(r => r.status === "completed").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+
+  // Selected vendor's filtered requests
+  const selectedGroup = selectedVendor ? vendorGroups.find(g => g.vendorUsername === selectedVendor) : null;
+  const vendorFilteredReqs = useMemo(() => {
+    if (!selectedGroup) return [];
+    return selectedGroup.requests
+      .filter(r => statusFilter === "all" || r.status === statusFilter)
+      .sort((a: any, b: any) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+  }, [selectedGroup, statusFilter]);
 
   const fmtDate = (dateStr: string) => {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("pt-BR", {
-      day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit",
-    });
+    return new Date(dateStr).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
   };
 
   const getDeadlineStatus = (deadline: string) => {
@@ -242,41 +265,230 @@ function AdminWithdrawalRequests() {
     );
   }
 
+  // ═══ VENDOR DETAIL VIEW ═══
+  if (selectedVendor && selectedGroup) {
+    return (
+      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+        {/* Back + Header */}
+        <div className="flex items-center gap-3">
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => { setSelectedVendor(null); setStatusFilter("all"); }}
+            className="p-2 bg-[#1f1f2e] rounded-xl border border-[#2a2a3e] text-[#00f0ff] hover:bg-[#00f0ff]/10 transition-colors"
+          >
+            <ChevronDown className="w-4 h-4 rotate-90" />
+          </motion.button>
+          <div className="flex items-center gap-3 flex-1">
+            <NeonAvatar name={selectedGroup.vendorName} size="md" />
+            <div>
+              <h2 className="text-white font-bold text-lg">{selectedGroup.vendorName}</h2>
+              <p className="text-gray-500 text-xs">@{selectedGroup.vendorUsername}</p>
+            </div>
+          </div>
+          <motion.button onClick={loadRequests} whileTap={{ scale: 0.95, rotate: 180 }}
+            className="p-2 bg-[#00f0ff]/10 text-[#00f0ff] rounded-lg border border-[#00f0ff]/20">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </motion.button>
+        </div>
+
+        {/* Vendor Summary Cards */}
+        <div className="grid grid-cols-2 gap-3">
+          <GlowCard glowColor="#ff9f00">
+            <div className="p-3 text-center">
+              <NeonText color="#ff9f00" className="text-2xl font-black block">{selectedGroup.pendingCount}</NeonText>
+              <p className="text-gray-500 text-[10px]">Pendentes</p>
+              <p className="text-[#ff9f00] text-xs font-bold mt-1">R$ {selectedGroup.pendingTotal.toFixed(2)}</p>
+            </div>
+          </GlowCard>
+          <GlowCard glowColor="#00ff41">
+            <div className="p-3 text-center">
+              <NeonText color="#00ff41" className="text-2xl font-black block">{selectedGroup.completedCount}</NeonText>
+              <p className="text-gray-500 text-[10px]">Concluídos</p>
+              <p className="text-[#00ff41] text-xs font-bold mt-1">R$ {selectedGroup.completedTotal.toFixed(2)}</p>
+            </div>
+          </GlowCard>
+        </div>
+
+        {/* Total Summary */}
+        <GlowCard glowColor="#00f0ff">
+          <div className="p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Banknote className="w-4 h-4 text-[#00f0ff]" />
+                <span className="text-white text-xs font-semibold">Resumo do Período</span>
+              </div>
+              <NeonText color="#00f0ff" className="text-lg font-black">R$ {selectedGroup.totalAmount.toFixed(2)}</NeonText>
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <div className="w-2 h-2 rounded-full bg-[#ff9f00]" />
+                <span className="text-gray-400">Pendente: <span className="text-[#ff9f00] font-semibold">R$ {selectedGroup.pendingTotal.toFixed(2)}</span></span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <div className="w-2 h-2 rounded-full bg-[#00ff41]" />
+                <span className="text-gray-400">Pago: <span className="text-[#00ff41] font-semibold">R$ {selectedGroup.completedTotal.toFixed(2)}</span></span>
+              </div>
+            </div>
+            {selectedGroup.pixAddress && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f2e]/40 flex items-center gap-2">
+                <span className="text-gray-600 text-[10px]">PIX:</span>
+                <span className="text-white font-mono text-[10px] flex-1 truncate">{selectedGroup.pixAddress}</span>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(selectedGroup.pixAddress).catch(() => {}); setCopiedPixId("vendor-pix"); setTimeout(() => setCopiedPixId(null), 2000); }}
+                  className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors shrink-0"
+                >
+                  {copiedPixId === "vendor-pix" ? <Check className="w-3 h-3 text-[#00ff41]" /> : <Copy className="w-3 h-3" />}
+                </button>
+              </div>
+            )}
+          </div>
+        </GlowCard>
+
+        {/* Status Filter */}
+        <div className="flex gap-2">
+          {([
+            { id: "all" as const, label: "Todos", color: "#00f0ff", count: selectedGroup.requests.length },
+            { id: "pending" as const, label: "Pendentes", color: "#ff9f00", count: selectedGroup.pendingCount },
+            { id: "completed" as const, label: "Concluídos", color: "#00ff41", count: selectedGroup.completedCount },
+          ]).map((f) => (
+            <motion.button key={f.id} whileTap={{ scale: 0.95 }} onClick={() => setStatusFilter(f.id)}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${statusFilter === f.id ? "" : "border-[#1f1f2e] text-gray-500 hover:text-gray-300"}`}
+              style={statusFilter === f.id ? { background: `linear-gradient(135deg, ${f.color}15, ${f.color}05)`, borderColor: `${f.color}40`, color: f.color } : {}}>
+              {f.label} ({f.count})
+            </motion.button>
+          ))}
+        </div>
+
+        {/* Withdrawal Cards */}
+        {vendorFilteredReqs.length === 0 ? (
+          <GlowCard>
+            <div className="py-8 text-center">
+              <Wallet className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+              <p className="text-gray-600 text-xs">Nenhum saque com este filtro</p>
+            </div>
+          </GlowCard>
+        ) : (
+          <div className="space-y-3">
+            {vendorFilteredReqs.map((req: any, idx: number) => {
+              const isPending = req.status === "pending";
+              const isCompleted = req.status === "completed";
+              const deadline = isPending ? getDeadlineStatus(req.deadline) : null;
+              const isCompleting = completing === req.id;
+              return (
+                <motion.div key={req.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04 }}>
+                  <GlowCard glowColor={isPending ? "#ff9f00" : "#00ff41"}>
+                    <div className="p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-gray-500 text-[10px] font-mono">#{req.id?.slice(-8)}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold`}
+                              style={{ background: isPending ? "rgba(255,159,0,0.12)" : "rgba(0,255,65,0.12)", color: isPending ? "#ff9f00" : "#00ff41" }}>
+                              {isPending ? <><Clock className="w-2.5 h-2.5" /> Pendente</> : <><BadgeCheck className="w-2.5 h-2.5" /> Concluído</>}
+                            </span>
+                          </div>
+                        </div>
+                        <NeonText color={isPending ? "#ff9f00" : "#00ff41"} className="text-xl font-black">
+                          R$ {(req.amount || 0).toFixed(2)}
+                        </NeonText>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                          <span className="text-gray-600 block">PIX Destino</span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-white font-mono text-[10px] break-all flex-1">{req.pixAddress || "Não informado"}</span>
+                            {req.pixAddress && (
+                              <button onClick={() => { navigator.clipboard.writeText(req.pixAddress).catch(() => {}); setCopiedPixId(req.id); setTimeout(() => setCopiedPixId(null), 2000); }}
+                                className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors shrink-0">
+                                {copiedPixId === req.id ? <Check className="w-3 h-3 text-[#00ff41]" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                          <span className="text-gray-600 block">Solicitado em</span>
+                          <span className="text-white">{fmtDate(req.requestedAt)}</span>
+                        </div>
+                        {isPending && deadline && (
+                          <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                            <span className="text-gray-600 block">Prazo</span>
+                            <motion.span className="font-semibold" style={{ color: deadline.color }}
+                              animate={deadline.urgent ? { opacity: [1, 0.5, 1] } : {}} transition={deadline.urgent ? { duration: 1, repeat: Infinity } : {}}>
+                              {deadline.label}
+                            </motion.span>
+                          </div>
+                        )}
+                        {isCompleted && req.completedAt && (
+                          <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
+                            <span className="text-gray-600 block">Concluído em</span>
+                            <span className="text-[#00ff41]">{fmtDate(req.completedAt)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {isPending && (
+                        <motion.button whileHover={{ scale: 1.02, boxShadow: "0 0 25px rgba(0,255,65,0.3)" }} whileTap={{ scale: 0.97 }}
+                          onClick={() => handleComplete(req.id)} disabled={isCompleting}
+                          className="w-full py-3 font-bold text-black text-sm rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                          style={{ background: "linear-gradient(135deg, #00ff41 0%, #00f0ff 100%)" }}>
+                          {isCompleting ? (
+                            <motion.div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full" animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }} />
+                          ) : (
+                            <><BadgeCheck className="w-4 h-4" /> Transferência Realizada</>
+                          )}
+                        </motion.button>
+                      )}
+                    </div>
+                  </GlowCard>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+    );
+  }
+
+  // ═══ VENDOR LIST VIEW (default) ═══
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-white font-bold text-xl flex items-center gap-2">
           <Banknote className="w-5 h-5 text-[#00f0ff]" />
-          <NeonText>Solicitações de Saque</NeonText>
+          <NeonText>Saques por Vendedor</NeonText>
         </h2>
-        <motion.button
-          onClick={loadRequests}
-          whileTap={{ scale: 0.95, rotate: 180 }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#00f0ff]/10 text-[#00f0ff] rounded-lg hover:bg-[#00f0ff]/15 transition-colors text-xs font-medium border border-[#00f0ff]/20"
-        >
+        <motion.button onClick={loadRequests} whileTap={{ scale: 0.95, rotate: 180 }}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#00f0ff]/10 text-[#00f0ff] rounded-lg hover:bg-[#00f0ff]/15 transition-colors text-xs font-medium border border-[#00f0ff]/20">
           <RefreshCw className="w-3.5 h-3.5" /> Atualizar
         </motion.button>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Global Stats */}
+      <div className="grid grid-cols-4 gap-2">
+        <GlowCard glowColor="#00f0ff">
+          <div className="p-2.5 text-center">
+            <NeonText color="#00f0ff" className="text-xl font-black block">{vendorGroups.length}</NeonText>
+            <p className="text-gray-500 text-[10px] mt-0.5">Vendedores</p>
+          </div>
+        </GlowCard>
         <GlowCard glowColor="#ff9f00">
-          <div className="p-3 text-center">
-            <NeonText color="#ff9f00" className="text-2xl font-black block">{pendingCount}</NeonText>
-            <p className="text-gray-500 text-[11px] mt-0.5">Pendentes</p>
+          <div className="p-2.5 text-center">
+            <NeonText color="#ff9f00" className="text-xl font-black block">{globalPending}</NeonText>
+            <p className="text-gray-500 text-[10px] mt-0.5">Pendentes</p>
           </div>
         </GlowCard>
         <GlowCard glowColor="#00ff41">
-          <div className="p-3 text-center">
-            <NeonText color="#00ff41" className="text-2xl font-black block">{completedCount}</NeonText>
-            <p className="text-gray-500 text-[11px] mt-0.5">Concluídos</p>
+          <div className="p-2.5 text-center">
+            <NeonText color="#00ff41" className="text-xl font-black block">{globalCompleted}</NeonText>
+            <p className="text-gray-500 text-[10px] mt-0.5">Concluídos</p>
           </div>
         </GlowCard>
         <GlowCard glowColor="#ff006e">
-          <div className="p-3 text-center">
-            <NeonText color="#ff006e" className="text-lg font-black block">R$ {pendingTotal.toFixed(2)}</NeonText>
-            <p className="text-gray-500 text-[11px] mt-0.5">Total Pendente</p>
+          <div className="p-2.5 text-center">
+            <NeonText color="#ff006e" className="text-sm font-black block">R$ {globalPendingTotal.toFixed(0)}</NeonText>
+            <p className="text-gray-500 text-[10px] mt-0.5">Pendente</p>
           </div>
         </GlowCard>
       </div>
@@ -286,7 +498,7 @@ function AdminWithdrawalRequests() {
         <div className="p-3">
           <div className="flex items-center gap-2 mb-2">
             <Calendar className="w-3.5 h-3.5 text-[#8b5cf6]" />
-            <span className="text-white text-xs font-semibold">Filtro por Data</span>
+            <span className="text-white text-xs font-semibold">Período</span>
           </div>
           <div className="flex flex-wrap gap-1.5 mb-2">
             {[
@@ -296,200 +508,420 @@ function AdminWithdrawalRequests() {
               { id: "mes", label: "Este mês" },
               { id: "tudo", label: "Tudo" },
             ].map((p) => (
-              <motion.button
-                key={p.id}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => applyPreset(p.id)}
+              <motion.button key={p.id} whileTap={{ scale: 0.95 }} onClick={() => applyPreset(p.id)}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
-                  datePreset === p.id
-                    ? "bg-[#8b5cf6]/20 text-[#8b5cf6] border border-[#8b5cf6]/40"
-                    : "bg-[#1f1f2e]/50 text-gray-500 border border-[#1f1f2e] hover:text-gray-300"
-                }`}
-              >
+                  datePreset === p.id ? "bg-[#8b5cf6]/20 text-[#8b5cf6] border border-[#8b5cf6]/40" : "bg-[#1f1f2e]/50 text-gray-500 border border-[#1f1f2e] hover:text-gray-300"
+                }`}>
                 {p.label}
               </motion.button>
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={dateFilterStart}
-              onChange={(e) => { setDateFilterStart(e.target.value); setDatePreset("custom"); }}
-              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50"
-            />
+            <input type="date" value={dateFilterStart} onChange={(e) => { setDateFilterStart(e.target.value); setDatePreset("custom"); }}
+              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50" />
             <span className="text-gray-600 text-xs">até</span>
-            <input
-              type="date"
-              value={dateFilterEnd}
-              onChange={(e) => { setDateFilterEnd(e.target.value); setDatePreset("custom"); }}
-              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50"
-            />
+            <input type="date" value={dateFilterEnd} onChange={(e) => { setDateFilterEnd(e.target.value); setDatePreset("custom"); }}
+              className="flex-1 px-2 py-1.5 bg-[#0c0c14] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50" />
           </div>
         </div>
       </GlowCard>
 
-      {/* Status Filter */}
-      <div className="flex gap-2">
-        {[
-          { id: "all" as const, label: "Todos", color: "#00f0ff" },
-          { id: "pending" as const, label: "Pendentes", color: "#ff9f00" },
-          { id: "completed" as const, label: "Concluídos", color: "#00ff41" },
-        ].map((f) => (
-          <motion.button
-            key={f.id}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setStatusFilter(f.id)}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${
-              statusFilter === f.id
-                ? ""
-                : "border-[#1f1f2e] text-gray-500 hover:text-gray-300"
-            }`}
-            style={statusFilter === f.id ? {
-              background: `linear-gradient(135deg, ${f.color}15, ${f.color}05)`,
-              borderColor: `${f.color}40`,
-              color: f.color,
-            } : {}}
-          >
-            {f.label}
-          </motion.button>
-        ))}
-      </div>
+      {/* Total Summary Bar */}
+      {vendorGroups.length > 0 && (
+        <GlowCard glowColor="#00f0ff">
+          <div className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white text-xs font-semibold">Total Geral no Período</span>
+              <NeonText color="#00f0ff" className="text-lg font-black">R$ {(globalPendingTotal + globalCompletedTotal).toFixed(2)}</NeonText>
+            </div>
+            <div className="h-2 bg-[#0c0c14] rounded-full overflow-hidden flex">
+              {globalCompletedTotal > 0 && (
+                <motion.div initial={{ width: 0 }} animate={{ width: `${(globalCompletedTotal / (globalPendingTotal + globalCompletedTotal)) * 100}%` }}
+                  transition={{ duration: 0.8 }} className="h-full bg-gradient-to-r from-[#00ff41] to-[#00f0ff] rounded-full" />
+              )}
+              {globalPendingTotal > 0 && (
+                <motion.div initial={{ width: 0 }} animate={{ width: `${(globalPendingTotal / (globalPendingTotal + globalCompletedTotal)) * 100}%` }}
+                  transition={{ duration: 0.8, delay: 0.2 }} className="h-full bg-gradient-to-r from-[#ff9f00] to-[#ff006e] rounded-full" />
+              )}
+            </div>
+            <div className="flex items-center justify-between mt-1.5 text-[10px]">
+              <span className="text-[#00ff41]">Pago: R$ {globalCompletedTotal.toFixed(2)}</span>
+              <span className="text-[#ff9f00]">Pendente: R$ {globalPendingTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        </GlowCard>
+      )}
 
-      {/* Requests List */}
-      {filteredRequests.length === 0 ? (
+      {/* Vendor Cards */}
+      {vendorGroups.length === 0 ? (
         <GlowCard>
           <div className="py-10 text-center">
             <motion.div animate={{ opacity: [0.2, 0.5, 0.2] }} transition={{ duration: 3, repeat: Infinity }}>
               <Wallet className="w-10 h-10 text-gray-700 mx-auto mb-2" />
             </motion.div>
-            <p className="text-gray-600 text-xs">Nenhuma solicitação de saque encontrada</p>
-            <p className="text-gray-700 text-[10px] mt-1">Ajuste os filtros ou aguarde novas solicitações</p>
+            <p className="text-gray-600 text-xs">Nenhum saque no período selecionado</p>
+            <p className="text-gray-700 text-[10px] mt-1">Ajuste as datas ou aguarde novas solicitações</p>
           </div>
         </GlowCard>
       ) : (
         <div className="space-y-3">
-          {filteredRequests.map((req, idx) => {
-            const isPending = req.status === "pending";
-            const isCompleted = req.status === "completed";
-            const deadline = isPending ? getDeadlineStatus(req.deadline) : null;
-            const isCompleting = completing === req.id;
-
+          {vendorGroups.map((group, idx) => {
+            const hasPending = group.pendingCount > 0;
             return (
-              <motion.div
-                key={req.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.04 }}
-              >
-                <GlowCard glowColor={isPending ? "#ff9f00" : "#00ff41"}>
-                  <div className="p-4 space-y-3">
-                    {/* Header Row */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <NeonAvatar name={req.vendorName || req.vendorUsername} size="sm" />
-                        <div>
-                          <h3 className="text-white font-semibold text-sm">{req.vendorName || "Vendedor"}</h3>
-                          <p className="text-gray-500 text-[11px]">@{req.vendorUsername}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <NeonText
-                          color={isPending ? "#ff9f00" : "#00ff41"}
-                          className="text-xl font-black block"
-                        >
-                          R$ {(req.amount || 0).toFixed(2)}
-                        </NeonText>
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5"
-                          style={{
-                            background: isPending ? "rgba(255,159,0,0.12)" : "rgba(0,255,65,0.12)",
-                            color: isPending ? "#ff9f00" : "#00ff41",
-                          }}
-                        >
-                          {isPending ? (
-                            <><Clock className="w-2.5 h-2.5" /> Pendente</>
-                          ) : (
-                            <><BadgeCheck className="w-2.5 h-2.5" /> Concluído</>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Details */}
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
-                        <span className="text-gray-600 block">PIX Destino</span>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-white font-mono text-[10px] break-all flex-1">{req.pixAddress || "Não informado"}</span>
-                          {req.pixAddress && (
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(req.pixAddress).catch(() => {});
-                                setCopiedPixId(req.id);
-                                setTimeout(() => setCopiedPixId(null), 2000);
-                              }}
-                              className="p-1 rounded-md hover:bg-[#00f0ff]/10 text-[#00f0ff] transition-colors shrink-0"
-                              title="Copiar chave PIX"
+              <motion.div key={group.vendorUsername} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.06 }}>
+                <motion.button
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => { setSelectedVendor(group.vendorUsername); setStatusFilter("all"); }}
+                  className="w-full text-left"
+                >
+                  <GlowCard glowColor={hasPending ? "#ff9f00" : "#00ff41"}>
+                    <div className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <NeonAvatar name={group.vendorName} size="md" />
+                          {hasPending && (
+                            <motion.div
+                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#ff9f00] flex items-center justify-center"
+                              animate={{ scale: [1, 1.15, 1] }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
                             >
-                              {copiedPixId === req.id ? <Check className="w-3 h-3 text-[#00ff41]" /> : <Copy className="w-3 h-3" />}
-                            </button>
+                              <span className="text-[9px] font-black text-black">{group.pendingCount}</span>
+                            </motion.div>
                           )}
                         </div>
-                      </div>
-                      <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
-                        <span className="text-gray-600 block">Solicitado em</span>
-                        <span className="text-white">{fmtDate(req.requestedAt)}</span>
-                      </div>
-                      {isPending && deadline && (
-                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
-                          <span className="text-gray-600 block">Prazo</span>
-                          <motion.span
-                            className="font-semibold"
-                            style={{ color: deadline.color }}
-                            animate={deadline.urgent ? { opacity: [1, 0.5, 1] } : {}}
-                            transition={deadline.urgent ? { duration: 1, repeat: Infinity } : {}}
-                          >
-                            {deadline.label}
-                          </motion.span>
-                        </div>
-                      )}
-                      {isCompleted && req.completedAt && (
-                        <div className="bg-[#0a0a12]/80 rounded-lg p-2 border border-[#1f1f2e]/30">
-                          <span className="text-gray-600 block">Concluído em</span>
-                          <span className="text-[#00ff41]">{fmtDate(req.completedAt)}</span>
-                        </div>
-                      )}
-                    </div>
 
-                    {/* Action Button */}
-                    {isPending && (
-                      <motion.button
-                        whileHover={{ scale: 1.02, boxShadow: "0 0 25px rgba(0,255,65,0.3)" }}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={() => handleComplete(req.id)}
-                        disabled={isCompleting}
-                        className="w-full py-3 font-bold text-black text-sm rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
-                        style={{ background: "linear-gradient(135deg, #00ff41 0%, #00f0ff 100%)" }}
-                      >
-                        {isCompleting ? (
-                          <motion.div
-                            className="w-4 h-4 border-2 border-black border-t-transparent rounded-full"
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-                          />
-                        ) : (
-                          <>
-                            <BadgeCheck className="w-4 h-4" />
-                            Transferência Realizada com Sucesso
-                          </>
-                        )}
-                      </motion.button>
-                    )}
-                  </div>
-                </GlowCard>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-white font-bold text-sm truncate">{group.vendorName}</h3>
+                            {hasPending && (
+                              <motion.span
+                                className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#ff9f00]/15 text-[#ff9f00] border border-[#ff9f00]/30"
+                                animate={{ opacity: [1, 0.6, 1] }}
+                                transition={{ duration: 2, repeat: Infinity }}
+                              >
+                                PENDENTE
+                              </motion.span>
+                            )}
+                          </div>
+                          <p className="text-gray-500 text-[11px]">@{group.vendorUsername}</p>
+
+                          {/* Mini stats row */}
+                          <div className="flex items-center gap-3 mt-1.5">
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#ff9f00]" />
+                              <span className="text-gray-400">{group.pendingCount} pend.</span>
+                              <span className="text-[#ff9f00] font-semibold">R$ {group.pendingTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#00ff41]" />
+                              <span className="text-gray-400">{group.completedCount} pag.</span>
+                              <span className="text-[#00ff41] font-semibold">R$ {group.completedTotal.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1">
+                          <NeonText color={hasPending ? "#ff9f00" : "#00ff41"} className="text-lg font-black">
+                            R$ {group.totalAmount.toFixed(2)}
+                          </NeonText>
+                          <div className="flex items-center gap-1 text-[#00f0ff] text-[11px]">
+                            <span>Ver {group.requests.length} {group.requests.length === 1 ? "saque" : "saques"}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </GlowCard>
+                </motion.button>
               </motion.div>
             );
           })}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADMIN ORDERS MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+function AdminOrdersTab() {
+  const [orders, setOrders] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>({});
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const loadOrders = useCallback(async () => {
+    try {
+      const res = await api.getAdminOrders();
+      if (res.success) {
+        setOrders(res.orders || []);
+        setStats(res.stats || {});
+      }
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { const i = setInterval(loadOrders, 12000); return () => clearInterval(i); }, [loadOrders]);
+
+  const statusColors: Record<string, { label: string; color: string }> = {
+    pending_payment: { label: "Aguardando PIX", color: "#f59e0b" },
+    pending: { label: "Pendente", color: "#ff9f00" },
+    accepted: { label: "Aceito", color: "#00f0ff" },
+    preparing: { label: "Preparando", color: "#8b5cf6" },
+    delivering: { label: "Enviando", color: "#ff9f00" },
+    driver_accepted: { label: "Motorista", color: "#00f0ff" },
+    on_the_way: { label: "A Caminho", color: "#ff00ff" },
+    delivered: { label: "Entregue", color: "#00ff41" },
+    cancelled: { label: "Cancelado", color: "#ff006e" },
+  };
+
+  const filteredOrders = orders.filter((o: any) => {
+    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (searchTerm) {
+      const s = searchTerm.toLowerCase();
+      return (o.id || "").toLowerCase().includes(s) ||
+        (o.clientUsername || "").toLowerCase().includes(s) ||
+        (o.vendorUsername || o._vendorUsername || "").toLowerCase().includes(s) ||
+        (o.driverUsername || "").toLowerCase().includes(s);
+    }
+    return true;
+  });
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard title="Total Pedidos" value={String(stats.totalOrders || 0)} icon={<ShoppingBag className="w-full h-full" />} color="cyan" />
+        <StatCard title="Ativos" value={String(stats.activeOrders || 0)} icon={<Clock className="w-full h-full" />} color="purple" />
+        <StatCard title="Entregues" value={String(stats.deliveredOrders || 0)} icon={<CheckCircle2 className="w-full h-full" />} color="green" />
+        <StatCard title="Cancelados" value={String(stats.cancelledOrders || 0)} icon={<Ban className="w-full h-full" />} color="pink" />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <GlowCard glowColor="#00ff41">
+          <div className="p-3 text-center">
+            <DollarSign className="w-5 h-5 text-[#00ff41] mx-auto mb-1" />
+            <p className="text-[#00ff41] font-bold text-lg">R$ {(stats.totalRevenue || 0).toFixed(2)}</p>
+            <p className="text-gray-500 text-[10px] uppercase">Receita Total</p>
+          </div>
+        </GlowCard>
+        <GlowCard glowColor="#ff9f00">
+          <div className="p-3 text-center">
+            <Star className="w-5 h-5 text-[#ff9f00] mx-auto mb-1" />
+            <p className="text-[#ff9f00] font-bold text-lg">{stats.avgRating || 0} <span className="text-xs text-gray-500">({stats.ratedOrders || 0})</span></p>
+            <p className="text-gray-500 text-[10px] uppercase">Media Avaliacoes</p>
+          </div>
+        </GlowCard>
+      </div>
+
+      {/* Search + Filter */}
+      <GlowCard glowColor="#8b5cf6">
+        <div className="p-3 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <Filter className="w-3.5 h-3.5 text-[#8b5cf6]" />
+            <span className="text-white font-bold text-xs">Filtros</span>
+            <motion.button whileTap={{ scale: 0.9 }} onClick={loadOrders} className="ml-auto p-1.5 rounded-lg bg-[#1f1f2e] text-gray-400 hover:text-white transition-colors">
+              <RefreshCw className="w-3.5 h-3.5" />
+            </motion.button>
+          </div>
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por ID, cliente, vendedor ou motorista..."
+            className="w-full px-3 py-2 bg-[#0a0a12] border border-[#1f1f2e] rounded-lg text-white text-xs focus:outline-none focus:border-[#8b5cf6]/50 placeholder:text-gray-700"
+          />
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { value: "all", label: "Todos" },
+              { value: "pending_payment", label: "Aguard. PIX" },
+              { value: "pending", label: "Pendentes" },
+              { value: "accepted", label: "Aceitos" },
+              { value: "preparing", label: "Preparando" },
+              { value: "delivering", label: "Enviando" },
+              { value: "driver_accepted", label: "Motorista" },
+              { value: "on_the_way", label: "A Caminho" },
+              { value: "delivered", label: "Entregues" },
+              { value: "cancelled", label: "Cancelados" },
+            ].map((f) => {
+              const active = statusFilter === f.value;
+              const sc = f.value === "all" ? "#8b5cf6" : (statusColors[f.value]?.color || "#8b5cf6");
+              const count = f.value === "all" ? orders.length : orders.filter((o: any) => o.status === f.value).length;
+              return (
+                <motion.button key={f.value} whileTap={{ scale: 0.92 }} onClick={() => setStatusFilter(f.value)}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${active ? "text-white" : "bg-[#0a0a0f] text-gray-500 border border-[#1f1f2e]/60 hover:text-gray-300"}`}
+                  style={active ? { background: `${sc}25`, border: `1px solid ${sc}50`, color: sc } : undefined}
+                >
+                  {f.label}
+                  {count > 0 && <span className={`text-[8px] ${active ? "" : "text-gray-600"}`}>({count})</span>}
+                </motion.button>
+              );
+            })}
+          </div>
+        </div>
+      </GlowCard>
+
+      {/* Orders List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-8 h-8 border-2 border-[#8b5cf6]/30 border-t-[#8b5cf6] rounded-full" />
+        </div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="py-10 text-center">
+          <ShoppingBag className="w-10 h-10 text-gray-700 mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">Nenhum pedido encontrado</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredOrders.slice(0, 50).map((order: any) => {
+            const sc = statusColors[order.status] || { label: order.status, color: "#666" };
+            const isExpanded = expandedOrder === order.id;
+            const isCancelled = order.status === "cancelled";
+            const isDelivered = order.status === "delivered";
+            const isActive = !isCancelled && !isDelivered;
+            return (
+              <motion.div key={order.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="relative overflow-hidden rounded-2xl">
+                {isActive && (
+                  <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
+                    style={{ background: `conic-gradient(from 0deg, ${sc.color}20, transparent, ${sc.color}10, transparent)` }}
+                    animate={{ rotate: [0, 360] }} transition={{ duration: 12, repeat: Infinity, ease: "linear" }} />
+                )}
+                <div className={`relative bg-[#0c0c14] rounded-2xl m-[1px] border ${isActive ? "" : isCancelled ? "border-[#ff006e]/15" : "border-[#00ff41]/15"}`}
+                  style={isActive ? { borderColor: `${sc.color}25` } : undefined}>
+                  {isActive && (
+                    <motion.div className="absolute top-0 left-0 right-0 h-[2px] rounded-t-2xl"
+                      style={{ background: `linear-gradient(90deg, transparent, ${sc.color}, transparent)` }}
+                      animate={{ opacity: [0.3, 0.8, 0.3] }} transition={{ duration: 2, repeat: Infinity }} />
+                  )}
+                  <div className="p-3.5">
+                    {/* Header */}
+                    <motion.button whileTap={{ scale: 0.98 }} onClick={() => setExpandedOrder(isExpanded ? null : order.id)}
+                      className="w-full flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl flex items-center justify-center"
+                          style={{ background: `${sc.color}15`, border: `1px solid ${sc.color}30` }}>
+                          {isCancelled ? <X className="w-4 h-4" style={{ color: sc.color }} /> :
+                            isDelivered ? <CheckCircle2 className="w-4 h-4" style={{ color: sc.color }} /> :
+                              order.driverUsername ? <Truck className="w-4 h-4" style={{ color: sc.color }} /> :
+                                <Package className="w-4 h-4" style={{ color: sc.color }} />}
+                        </div>
+                        <div className="text-left">
+                          <p className="text-white font-bold text-sm">#{order.id.slice(-6).toUpperCase()}</p>
+                          <p className="text-gray-500 text-[10px]">
+                            {order.createdAt ? new Date(order.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border"
+                          style={{ color: sc.color, backgroundColor: `${sc.color}15`, borderColor: `${sc.color}30` }}>
+                          {sc.label}
+                        </span>
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />}
+                      </div>
+                    </motion.button>
+
+                    {/* Participants row */}
+                    <div className="flex items-center gap-3 mt-2 text-[10px]">
+                      <span className="text-gray-500">Vendedor: <span className="text-[#00f0ff]">@{order.vendorUsername || order._vendorUsername}</span></span>
+                      <span className="text-gray-500">Cliente: <span className="text-[#8b5cf6]">@{order.clientUsername}</span></span>
+                      {order.driverUsername && <span className="text-gray-500">Motorista: <span className="text-[#ff00ff]">@{order.driverUsername}</span></span>}
+                    </div>
+
+                    {/* Rating */}
+                    {order.rating && (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <div className="flex gap-0.5">
+                          {[1, 2, 3, 4, 5].map((s) => (
+                            <Star key={s} className={`w-3 h-3 ${s <= order.rating ? "text-[#ff9f00] fill-[#ff9f00]" : "text-gray-700"}`} />
+                          ))}
+                        </div>
+                        <span className="text-[#ff9f00] text-[10px] font-bold">{order.rating}/5</span>
+                        {order.ratingComment && <span className="text-gray-400 text-[10px] truncate flex-1">— {order.ratingComment}</span>}
+                      </div>
+                    )}
+
+                    {/* Cancellation info */}
+                    {isCancelled && order.cancelReason && (
+                      <div className="flex items-center gap-1.5 mt-2 px-2 py-1.5 bg-[#ff006e]/5 border border-[#ff006e]/15 rounded-lg">
+                        <AlertTriangle className="w-3 h-3 text-[#ff006e] shrink-0" />
+                        <span className="text-[#ff006e] text-[10px] font-medium">
+                          {order.cancelledBy === "vendor" ? "Recusado pelo vendedor" : order.cancelledBy === "client" ? "Cancelado pelo cliente" : "Cancelado"}
+                          {order.cancelReason !== "cancelled_by_client" && order.cancelReason !== "rejected_by_vendor" && order.cancelReason !== "pix_expired" && `: ${order.cancelReason}`}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Expanded Details */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }} className="overflow-hidden">
+                          <div className="pt-3 mt-3 border-t border-[#1f1f2e]/40 space-y-2">
+                            {/* Items */}
+                            <div className="bg-[#0a0a12]/60 rounded-xl p-2.5">
+                              <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-1.5 font-medium">Itens</p>
+                              {order.items?.map((item: any, i: number) => (
+                                <div key={i} className="flex justify-between text-[11px] py-0.5">
+                                  <span className="text-gray-300">{item.name} <span className="text-gray-600">x{item.qty || 1}</span></span>
+                                  <span className="text-white font-medium">R$ {(Number(item.price) * (item.qty || 1)).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Delivery Address */}
+                            {order.deliveryAddress && (
+                              <div className="flex items-start gap-1.5 px-1">
+                                <Navigation className="w-3.5 h-3.5 text-[#8b5cf6] shrink-0 mt-0.5" />
+                                <span className="text-gray-400 text-[11px]">{order.deliveryAddress}</span>
+                              </div>
+                            )}
+                            {/* Fee Breakdown */}
+                            {order.feeBreakdown && (
+                              <div className="bg-[#0a0a12]/60 rounded-xl p-2.5">
+                                <p className="text-gray-500 text-[9px] uppercase tracking-wider mb-1.5 font-medium">Distribuicao</p>
+                                <div className="space-y-1 text-[10px]">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Admin ({order.feeBreakdown.adminRate}%)</span>
+                                    <span className="text-[#ff006e] font-medium">R$ {(order.feeBreakdown.adminTotal || 0).toFixed(2)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Motorista</span>
+                                    <span className="text-[#ff9f00] font-medium">R$ {(order.feeBreakdown.driverTotal || 0).toFixed(2)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Vendedor</span>
+                                    <span className="text-[#00ff41] font-medium">R$ {(order.feeBreakdown.vendorProfit || order.feeBreakdown.vendorNet || 0).toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {/* Payment info */}
+                            <div className="flex items-center gap-2 text-[10px]">
+                              {order.paymentStatus === "paid" && (
+                                <span className="px-2 py-0.5 bg-[#00ff41]/10 text-[#00ff41] font-bold rounded border border-[#00ff41]/20">PIX PAGO</span>
+                              )}
+                              {order.updatedAt && (
+                                <span className="text-gray-600">Atualizado: {new Date(order.updatedAt).toLocaleString("pt-BR")}</span>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+          {filteredOrders.length > 50 && (
+            <p className="text-center text-gray-500 text-xs py-2">Mostrando 50 de {filteredOrders.length} pedidos</p>
+          )}
         </div>
       )}
     </motion.div>
@@ -527,7 +959,7 @@ export function AdminPanel() {
       const res = await api.getHierarchy();
       if (res.success) setHierarchy(res.hierarchy);
     } catch (err) {
-      console.error("Erro ao carregar hierarquia:", err);
+      /* silent — polling */
     }
   }, []);
 
@@ -536,7 +968,7 @@ export function AdminPanel() {
       const res = await api.getMetrics("admin");
       if (res.success) setMetrics(res.metrics || {});
     } catch (err) {
-      console.error("Erro ao carregar metricas:", err);
+      /* silent — polling */
     }
   }, []);
 
@@ -590,6 +1022,7 @@ export function AdminPanel() {
     { icon: <Users className="w-5 h-5" />, label: "Hierarquia", id: "hierarquia" },
     { icon: <Ticket className="w-5 h-5" />, label: "Convites", id: "convite" },
     { icon: <Percent className="w-5 h-5" />, label: "Taxa", id: "taxa" },
+    { icon: <ShoppingBag className="w-5 h-5" />, label: "Pedidos", id: "pedidos" },
     { icon: <Shield className="w-5 h-5" />, label: "Seguranca", id: "seguranca" },
     { icon: <Key className="w-5 h-5" />, label: "API", id: "api" },
     { icon: <TrendingUp className="w-5 h-5" />, label: "Faturamento", id: "faturamento" },
@@ -1332,6 +1765,11 @@ export function AdminPanel() {
       {/* ===================== SOLICITAÇÕES DE SAQUE ===================== */}
       {activeTab === "saques" && (
         <AdminWithdrawalRequests />
+      )}
+
+      {/* ===================== PEDIDOS (ALL ORDERS) ===================== */}
+      {activeTab === "pedidos" && (
+        <AdminOrdersTab />
       )}
 
       {/* ===================== PWA DIAGNOSTICS ===================== */}

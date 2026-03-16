@@ -8,6 +8,7 @@ import { StatCard } from "../components/stat-card";
 import { useCallSystem } from "../hooks/useCallSystem";
 import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overlays";
 import { VendedorDashboardCharts } from "../components/vendedor-charts";
+import { RatingsCard } from "../components/ratings-card";
 import * as notif from "../services/notifications";
 import * as pwa from "../services/pwa";
 import {
@@ -16,7 +17,7 @@ import {
   ClipboardList, Trash2, Clock, CheckCircle2, UserPlus, RefreshCw, ArrowLeft,
   Shield, Zap, Send, ChevronLeft, CheckCheck, Mic, Phone, Video, Camera, Image as ImageIcon,
   Paperclip, Play, Pause, Square, MicOff, PhoneOff, VideoOff, Maximize2, QrCode, Loader2,
-  Navigation, Calendar, Filter, Eye, Banknote, ArrowDownToLine, AlertCircle, BadgeCheck,
+  Navigation, Calendar, Filter, Eye, Banknote, ArrowDownToLine, AlertCircle, BadgeCheck, AlertTriangle,
 } from "lucide-react";
 
 // ─── Shared Neon Components ─────────────────────────────────────────
@@ -1608,13 +1609,14 @@ function VendorPixCountdown({ createdAt }: { createdAt: string }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  const EXPIRY_MS = 15 * 60 * 1000;
+  const EXPIRY_MS = 24 * 60 * 60 * 1000;
   const elapsed = now - new Date(createdAt).getTime();
   const remaining = Math.max(0, EXPIRY_MS - elapsed);
-  const mins = Math.floor(remaining / 60000);
+  const hours = Math.floor(remaining / 3600000);
+  const mins = Math.floor((remaining % 3600000) / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
   const progress = remaining / EXPIRY_MS;
-  const isUrgent = mins < 3;
+  const isUrgent = remaining < 30 * 60 * 1000;
 
   return (
     <div className="space-y-1.5">
@@ -1630,7 +1632,7 @@ function VendorPixCountdown({ createdAt }: { createdAt: string }) {
           animate={isUrgent ? { opacity: [1, 0.4, 1] } : {}}
           transition={{ duration: 1, repeat: Infinity }}
         >
-          {String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}
+          {hours > 0 ? `${String(hours).padStart(2, "0")}:` : ""}{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}
         </motion.span>
       </div>
       <div className="flex items-center gap-2 px-2 py-1.5 bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-xl">
@@ -1729,14 +1731,14 @@ export function VendedorPanel() {
           generatedAt: new Date(code.generatedAt).toLocaleDateString(),
         })));
       }
-    } catch (error) { console.error("Erro ao buscar codigos:", error); }
+    } catch (error) { /* silent — polling fetch errors are transient */ }
   };
 
   const loadCommissionRate = async () => {
     try {
       const r = await api.getVendorCommission(currentUser.username);
       if (r.success) setAdminCommissionRate(r.rate);
-    } catch (e) { console.error("Erro ao carregar taxa:", e); }
+    } catch (e) { /* silent */ }
   };
 
   useEffect(() => { loadMyUsers(); loadProducts(); loadOrders(); loadMetrics(); fetchCodes(); loadCommissionRate(); }, []);
@@ -1759,17 +1761,17 @@ export function VendedorPanel() {
   }, [orders]);
 
   const loadMyUsers = async () => {
-    try { setLoading(true); const r = await api.getUsersCreatedBy(currentUser.username); if (r.success) { const u = r.users || []; setClientes(u.filter((x: any) => x.role === "cliente")); setMotoristas(u.filter((x: any) => x.role === "motorista")); } } catch (e) { console.error(e); } finally { setLoading(false); }
+    try { setLoading(true); const r = await api.getUsersCreatedBy(currentUser.username); if (r.success) { const u = r.users || []; setClientes(u.filter((x: any) => x.role === "cliente")); setMotoristas(u.filter((x: any) => x.role === "motorista")); } } catch (e) { /* silent */ } finally { setLoading(false); }
   };
-  const loadProducts = async () => { try { const r = await api.getProducts(currentUser.username); if (r.success) setProdutos(r.products || []); } catch (e) { console.error(e); } };
-  const loadOrders = async () => { try { const r = await api.getVendorOrders(currentUser.username); if (r.success) setOrders(r.orders || []); } catch (e) { console.error(e); } };
-  const loadMetrics = async () => { try { const r = await api.getMetrics(currentUser.username); if (r.success) { setMetrics(r.metrics || {}); if (r.metrics?.adminCommissionRate !== undefined) setAdminCommissionRate(r.metrics.adminCommissionRate); } } catch (e) { console.error(e); } };
+  const loadProducts = async () => { try { const r = await api.getProducts(currentUser.username); if (r.success) setProdutos(r.products || []); } catch (e) { /* silent */ } };
+  const loadOrders = async () => { try { const r = await api.getVendorOrders(currentUser.username); if (r.success) setOrders(r.orders || []); } catch (e) { /* silent */ } };
+  const loadMetrics = async () => { try { const r = await api.getMetrics(currentUser.username); if (r.success) { setMetrics(r.metrics || {}); if (r.metrics?.adminCommissionRate !== undefined) setAdminCommissionRate(r.metrics.adminCommissionRate); } } catch (e) { /* silent */ } };
 
   const handleToggleOnline = async () => {
     const n = !isOnline; setIsOnline(n);
     localStorage.setItem("vendedor_online_" + currentUser.username, String(n));
     sfx.playToggle(n);
-    try { await api.setUserStatus(currentUser.username, n); } catch (e) { console.error(e); }
+    try { await api.setUserStatus(currentUser.username, n); } catch (e) { /* silent */ }
     if (n) {
       pwa.setPushEnabledForUser(currentUser.username, true);
       pwa.registerPushSubscription(currentUser.username).catch(() => {});
@@ -1791,8 +1793,8 @@ export function VendedorPanel() {
     }
   }, []);
 
-  // Filter pending_payment orders — only show if within 15 min window
-  const PIX_EXPIRY_MS = 15 * 60 * 1000;
+  // Filter pending_payment orders — only show if within 24 hour window
+  const PIX_EXPIRY_MS = 24 * 60 * 60 * 1000;
   const activePendingPaymentOrders = orders.filter((o: any) => {
     if (o.status !== "pending_payment") return false;
     const elapsed = Date.now() - new Date(o.createdAt).getTime();
@@ -1828,6 +1830,77 @@ export function VendedorPanel() {
   };
 
   const handleDeleteProduct = async (id: string) => { try { await api.deleteProduct(currentUser.username, id); setProdutos((p) => p.filter((x) => x.id !== id)); } catch (e: any) { alert("Erro: " + e.message); } };
+
+  // ─── Rejection modal state ───
+  const [rejectOrder, setRejectOrder] = useState<any>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+
+  // ─── Refund modal state (for paid orders) ───
+  const [refundOrder, setRefundOrder] = useState<any>(null);
+  const [refundConfirmed, setRefundConfirmed] = useState(false);
+  const [refunding, setRefunding] = useState(false);
+  const [completingRefund, setCompletingRefund] = useState<string | null>(null);
+
+  const handleRejectOrder = async () => {
+    if (!rejectOrder) return;
+    setRejecting(true);
+    try {
+      const res = await api.rejectOrder(rejectOrder.id, {
+        vendorUsername: currentUser.username,
+        clientUsername: rejectOrder.clientUsername,
+        reason: rejectReason.trim() || undefined,
+      });
+      if (res.success) {
+        setOrders((prev) => prev.map((o) => (o.id === rejectOrder.id ? { ...o, status: "cancelled", cancelledBy: "vendor", cancelReason: rejectReason.trim() || "rejected_by_vendor", updatedAt: new Date().toISOString() } : o)));
+        setRejectOrder(null);
+        setRejectReason("");
+        sfx.playError();
+      } else {
+        alert(res.error || "Erro ao rejeitar");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setRejecting(false); }
+  };
+
+  const handleRefundOrder = async () => {
+    if (!refundOrder || !refundConfirmed) return;
+    setRefunding(true);
+    try {
+      const res = await api.rejectOrder(refundOrder.id, {
+        vendorUsername: currentUser.username,
+        clientUsername: refundOrder.clientUsername,
+        reason: "Pedido não aceito — reembolso solicitado",
+        refundRequested: true,
+      });
+      if (res.success) {
+        setOrders((prev) => prev.map((o) => (o.id === refundOrder.id ? { ...o, status: "cancelled", cancelledBy: "vendor", cancelReason: "refund_by_vendor", refundStatus: "awaiting_client_details", updatedAt: new Date().toISOString() } : o)));
+        setRefundOrder(null);
+        setRefundConfirmed(false);
+        sfx.playError();
+      } else {
+        alert(res.error || "Erro ao processar reembolso");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setRefunding(false); }
+  };
+
+  const handleCompleteRefund = async (order: any) => {
+    setCompletingRefund(order.id);
+    try {
+      const res = await api.completeRefund(order.id, {
+        vendorUsername: currentUser.username,
+        clientUsername: order.clientUsername,
+      });
+      if (res.success) {
+        setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, refundStatus: "completed", refundCompletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : o)));
+        sfx.playSuccess?.();
+      } else {
+        alert(res.error || "Erro ao confirmar reembolso");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setCompletingRefund(null); }
+  };
 
   const handleUpdateOrderStatus = async (order: any, newStatus: string) => {
     // Intercept "delivering" to open driver selection modal
@@ -2326,6 +2399,9 @@ export function VendedorPanel() {
                 directPixTotal={metrics.directPixSales || 0}
                 directPixCount={metrics.directPixCount || 0}
               />
+
+              {/* Ratings Card */}
+              <RatingsCard username={currentUser.username} type="vendor" glowColor="#ff9f00" />
             </motion.div>
           )}
 
@@ -2521,21 +2597,42 @@ export function VendedorPanel() {
                               </div>
                             </div>
                           )}
-                          <div className="flex gap-2">
-                            <motion.button whileTap={{ scale: 0.95 }}
-                              onClick={() => handleUpdateOrderStatus(order, "cancelled")}
-                              className="flex-1 py-2.5 rounded-xl bg-[#ff006e]/10 text-[#ff006e] font-semibold text-xs border border-[#ff006e]/20 hover:bg-[#ff006e]/20 transition-colors flex items-center justify-center gap-1.5"
-                            >
-                              <X className="w-3.5 h-3.5" /> Recusar
-                            </motion.button>
+                          <div className="flex flex-col gap-2">
                             <motion.button whileTap={{ scale: 0.95 }}
                               onClick={() => handleUpdateOrderStatus(order, "accepted")}
-                              className="flex-1 py-2.5 rounded-xl text-black font-bold text-xs flex items-center justify-center gap-1.5"
+                              className="w-full py-3 rounded-xl text-black font-bold text-xs flex items-center justify-center gap-1.5"
                               style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 20px rgba(0,255,65,0.3)" }}
                             >
-                              <Check className="w-3.5 h-3.5" /> Aceitar
+                              <Check className="w-3.5 h-3.5" /> Aceitar Pedido
                             </motion.button>
+                            {order.paymentStatus === "paid" && order.paymentSource === "client" ? (
+                              <motion.button whileTap={{ scale: 0.95 }}
+                                onClick={() => setRefundOrder(order)}
+                                className="w-full py-2.5 rounded-xl bg-[#ff006e]/10 text-[#ff006e] font-semibold text-[11px] border border-[#ff006e]/20 hover:bg-[#ff006e]/20 transition-colors flex items-center justify-center gap-1.5"
+                              >
+                                <X className="w-3.5 h-3.5" /> Não Aceitar Pedido — Reembolsar Cliente
+                              </motion.button>
+                            ) : (
+                              <motion.button whileTap={{ scale: 0.95 }}
+                                onClick={() => setRejectOrder(order)}
+                                className="w-full py-2.5 rounded-xl bg-[#ff006e]/10 text-[#ff006e] font-semibold text-xs border border-[#ff006e]/20 hover:bg-[#ff006e]/20 transition-colors flex items-center justify-center gap-1.5"
+                              >
+                                <X className="w-3.5 h-3.5" /> Recusar
+                              </motion.button>
+                            )}
                           </div>
+                          {/* Rating display */}
+                          {order.rating && (
+                            <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-[#1f1f2e]/30">
+                              {[1, 2, 3, 4, 5].map((s) => (
+                                <div key={s} className={`w-3 h-3 ${s <= order.rating ? "text-[#ff9f00]" : "text-gray-700"}`}>
+                                  <svg viewBox="0 0 24 24" fill={s <= order.rating ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                                </div>
+                              ))}
+                              <span className="text-[#ff9f00] text-[10px] font-bold ml-1">{order.rating}/5</span>
+                              {order.ratingComment && <span className="text-gray-500 text-[9px] truncate flex-1">— {order.ratingComment}</span>}
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     ))}
@@ -2674,21 +2771,83 @@ export function VendedorPanel() {
                   <div className="space-y-1.5">
                     {orders.filter((o: any) => ["delivered", "cancelled"].includes(o.status)).slice(0, 10).map((order: any) => {
                       const isCancelled = order.status === "cancelled";
+                      const hasRefund = isCancelled && order.refundStatus;
+                      const refundColor = order.refundStatus === "completed" ? "#00ff41" : order.refundStatus === "awaiting_vendor_transfer" ? "#ff9f00" : order.refundStatus === "awaiting_client_details" ? "#ff9f00" : "#ff006e";
+                      const borderColor = isCancelled ? (hasRefund ? `${refundColor}25` : "rgba(255,0,110,0.15)") : "rgba(0,255,65,0.15)";
+                      const bgColor = isCancelled ? (hasRefund ? `${refundColor}08` : "rgba(255,0,110,0.05)") : "rgba(0,255,65,0.05)";
                       return (
-                        <div key={order.id} className={`flex items-center gap-3 p-3 rounded-xl border ${isCancelled ? "bg-[#ff006e]/5 border-[#ff006e]/15" : "bg-[#00ff41]/5 border-[#00ff41]/15"}`}>
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isCancelled ? "bg-[#ff006e]/15" : "bg-[#00ff41]/15"}`}>
-                            {isCancelled ? <X className="w-3.5 h-3.5 text-[#ff006e]" /> : <Check className="w-3.5 h-3.5 text-[#00ff41]" />}
+                        <div key={order.id} className="rounded-xl border overflow-hidden" style={{ borderColor, background: bgColor }}>
+                          <div className="flex items-center gap-3 p-3">
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center`} style={{ background: `${refundColor}15` }}>
+                              {order.refundStatus === "completed" ? <CheckCircle2 className="w-3.5 h-3.5" style={{ color: refundColor }} /> : isCancelled ? <X className="w-3.5 h-3.5" style={{ color: refundColor }} /> : <Check className="w-3.5 h-3.5 text-[#00ff41]" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white font-semibold text-xs">#{order.id.slice(-6).toUpperCase()}</p>
+                              <p className="text-gray-500 text-[10px]">@{order.clientUsername}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</p>
+                              <p className="text-[10px] font-medium" style={{ color: refundColor }}>
+                                {isCancelled
+                                  ? order.refundStatus === "completed" ? "Reembolso Concluído"
+                                  : order.refundStatus === "awaiting_vendor_transfer" ? "Dados Recebidos — Reembolsar!"
+                                  : order.refundStatus === "awaiting_client_details" ? "Aguardando Cliente..."
+                                  : "Cancelado"
+                                  : "Entregue"}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white font-semibold text-xs">#{order.id.slice(-6).toUpperCase()}</p>
-                            <p className="text-gray-500 text-[10px]">@{order.clientUsername}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-white font-bold text-xs">R$ {(order.total || 0).toFixed(2)}</p>
-                            <p className={`text-[10px] font-medium ${isCancelled ? "text-[#ff006e]" : "text-[#00ff41]"}`}>
-                              {isCancelled ? "Cancelado" : "Entregue"}
-                            </p>
-                          </div>
+                          {/* Show client bank details when available for vendor to transfer */}
+                          {isCancelled && order.refundStatus === "awaiting_vendor_transfer" && order.refundBankDetails && (
+                            <div className="px-3 pb-3">
+                              <div className="p-3 bg-[#0a0a12]/80 border border-[#ff9f00]/15 rounded-xl">
+                                <p className="text-[#ff9f00] text-[10px] font-bold mb-2">Dados Bancários do Cliente</p>
+                                <div className="space-y-1.5 mb-3">
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-gray-500">Tipo Chave PIX</span>
+                                    <span className="text-white font-medium uppercase">{order.refundBankDetails.pixKeyType}</span>
+                                  </div>
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-gray-500">Chave PIX</span>
+                                    <span className="text-[#00f0ff] font-bold">{order.refundBankDetails.pixKey}</span>
+                                  </div>
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-gray-500">Titular</span>
+                                    <span className="text-white font-medium">{order.refundBankDetails.holderName}</span>
+                                  </div>
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-gray-500">Valor</span>
+                                    <span className="text-[#00ff41] font-bold">R$ {(order.total || 0).toFixed(2)}</span>
+                                  </div>
+                                </div>
+                                <motion.button whileTap={{ scale: 0.95 }}
+                                  disabled={completingRefund === order.id}
+                                  onClick={() => handleCompleteRefund(order)}
+                                  className="w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                                  style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 20px rgba(0,255,65,0.2)" }}
+                                >
+                                  {completingRefund === order.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-black" /> : <Check className="w-3.5 h-3.5 text-black" />}
+                                  <span className="text-black">{completingRefund === order.id ? "Confirmando..." : "Reembolso Concluído com Sucesso"}</span>
+                                </motion.button>
+                              </div>
+                            </div>
+                          )}
+                          {isCancelled && order.refundStatus === "awaiting_client_details" && (
+                            <div className="px-3 pb-3">
+                              <div className="flex items-center gap-2 p-2.5 bg-[#ff9f00]/5 border border-[#ff9f00]/10 rounded-xl">
+                                <Loader2 className="w-3 h-3 animate-spin text-[#ff9f00]" />
+                                <p className="text-[#ff9f00] text-[10px]">Aguardando cliente preencher dados bancários...</p>
+                              </div>
+                            </div>
+                          )}
+                          {isCancelled && order.refundStatus === "completed" && (
+                            <div className="px-3 pb-3">
+                              <div className="flex items-center gap-2 p-2.5 bg-[#00ff41]/5 border border-[#00ff41]/10 rounded-xl">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-[#00ff41]" />
+                                <p className="text-[#00ff41] text-[10px] font-bold">Reembolso concluído com sucesso!</p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -3193,6 +3352,143 @@ export function VendedorPanel() {
                     </motion.button>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Order Rejection Modal ── */}
+      <AnimatePresence>
+        {rejectOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget && !rejecting) { setRejectOrder(null); setRejectReason(""); } }}
+          >
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#0c0c14] border border-[#ff006e]/20 rounded-2xl p-5 w-full max-w-sm shadow-[0_0_40px_rgba(255,0,110,0.1)]"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-[#ff006e]/10 border border-[#ff006e]/20 flex items-center justify-center">
+                  <X className="w-5 h-5 text-[#ff006e]" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Recusar Pedido</h3>
+                  <p className="text-gray-500 text-[10px]">#{rejectOrder.id?.slice(-6).toUpperCase()} — R$ {Number(rejectOrder.total).toFixed(2)}</p>
+                </div>
+              </div>
+              <p className="text-gray-400 text-xs mb-3">O cliente será notificado sobre a recusa. Informe o motivo para melhor comunicação.</p>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Motivo da recusa (ex: item indisponível, loja fechada...)"
+                className="w-full px-3 py-2.5 bg-[#12121a] border border-[#1f1f2e] rounded-xl text-white text-xs focus:outline-none focus:border-[#ff006e]/40 placeholder-gray-600 resize-none h-20 mb-4"
+              />
+              <div className="flex gap-2">
+                <motion.button whileTap={{ scale: 0.95 }} disabled={rejecting}
+                  onClick={() => { setRejectOrder(null); setRejectReason(""); }}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-[#1f1f2e] text-gray-400 hover:bg-[#1f1f2e]/50 transition-all disabled:opacity-50"
+                >
+                  Voltar
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.95 }} disabled={rejecting}
+                  onClick={handleRejectOrder}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-[#ff006e]/15 border border-[#ff006e]/30 text-[#ff006e] hover:bg-[#ff006e]/25 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {rejecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                  {rejecting ? "Recusando..." : "Confirmar Recusa"}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Refund Confirmation Modal (vendor side — no bank form) ── */}
+      <AnimatePresence>
+        {refundOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget && !refunding) { setRefundOrder(null); setRefundConfirmed(false); } }}
+          >
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#0c0c14] border border-[#ff006e]/20 rounded-2xl p-5 w-full max-w-sm shadow-[0_0_40px_rgba(255,0,110,0.15)]"
+            >
+              {/* Warning Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 2, repeat: Infinity }}
+                  className="w-11 h-11 rounded-xl bg-[#ff006e]/10 border border-[#ff006e]/20 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-[#ff006e]" />
+                </motion.div>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Cancelar e Reembolsar</h3>
+                  <p className="text-gray-500 text-[10px]">#{refundOrder.id?.slice(-6).toUpperCase()} — R$ {Number(refundOrder.total).toFixed(2)}</p>
+                </div>
+              </div>
+
+              {/* Warning Message */}
+              <div className="bg-[#ff006e]/5 border border-[#ff006e]/20 rounded-xl p-3.5 mb-4">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-[#ff006e] shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[#ff006e] font-bold text-xs mb-1.5">Atenção! Este pedido já foi pago pelo cliente.</p>
+                    <p className="text-gray-300 text-[11px] leading-relaxed">
+                      Ao não aceitar este pedido, ele será <span className="text-[#ff006e] font-bold">cancelado imediatamente</span> e o cliente <span className="text-[#00f0ff] font-medium">@{refundOrder.clientUsername}</span> receberá uma solicitação para preencher seus dados bancários.
+                    </p>
+                    <p className="text-gray-300 text-[11px] leading-relaxed mt-2">
+                      O valor de <span className="text-white font-bold">R$ {Number(refundOrder.total).toFixed(2)}</span> deverá ser reembolsado em até <span className="text-[#ff9f00] font-bold">24 horas</span> após o cliente enviar os dados.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Flow explanation */}
+              <div className="bg-[#0a0a12]/60 rounded-xl p-3 mb-4 space-y-2">
+                <p className="text-gray-500 text-[9px] uppercase tracking-wider font-medium">Como funciona</p>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#ff006e]/15 text-[#ff006e] text-[9px] font-bold flex items-center justify-center shrink-0">1</span>
+                  <p className="text-gray-400 text-[10px]">Pedido é cancelado e cliente é notificado</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#ff9f00]/15 text-[#ff9f00] text-[9px] font-bold flex items-center justify-center shrink-0">2</span>
+                  <p className="text-gray-400 text-[10px]">Cliente preenche dados bancários (chave PIX)</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#00f0ff]/15 text-[#00f0ff] text-[9px] font-bold flex items-center justify-center shrink-0">3</span>
+                  <p className="text-gray-400 text-[10px]">Você recebe os dados e faz o reembolso via PIX</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#00ff41]/15 text-[#00ff41] text-[9px] font-bold flex items-center justify-center shrink-0">4</span>
+                  <p className="text-gray-400 text-[10px]">Confirma o reembolso e ambos são atualizados</p>
+                </div>
+              </div>
+
+              {/* Confirmation Checkbox */}
+              <label className="flex items-start gap-2.5 mb-4 cursor-pointer group" onClick={() => setRefundConfirmed(!refundConfirmed)}>
+                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${refundConfirmed ? "bg-[#ff006e] border-[#ff006e]" : "border-gray-600 group-hover:border-gray-400"}`}>
+                  {refundConfirmed && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <span className="text-gray-300 text-[11px] leading-relaxed">
+                  <span className="text-white font-bold">Sim, entendi perfeitamente.</span> O pedido será cancelado e o cliente será solicitado a fornecer dados para reembolso.
+                </span>
+              </label>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2">
+                <motion.button whileTap={{ scale: 0.95 }} disabled={refunding}
+                  onClick={() => { setRefundOrder(null); setRefundConfirmed(false); }}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-[#1f1f2e] text-gray-400 hover:bg-[#1f1f2e]/50 transition-all disabled:opacity-50"
+                >
+                  Voltar
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.95 }}
+                  disabled={refunding || !refundConfirmed}
+                  onClick={handleRefundOrder}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-[#ff006e]/15 border border-[#ff006e]/30 text-[#ff006e] hover:bg-[#ff006e]/25 transition-all disabled:opacity-30 flex items-center justify-center gap-1.5"
+                >
+                  {refunding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                  {refunding ? "Processando..." : "Cancelar e Reembolsar"}
+                </motion.button>
               </div>
             </motion.div>
           </motion.div>

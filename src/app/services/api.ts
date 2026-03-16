@@ -27,10 +27,20 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
       },
     });
 
-    const data = await response.json();
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      // If JSON parsing fails (e.g. empty body, HTML error page), return graceful error
+      if (!response.ok) {
+        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+      }
+      return { success: false, error: 'Invalid JSON response' };
+    }
     
     if (!response.ok) {
-      throw new Error(data.error || 'Erro na requisição');
+      // Return error data instead of throwing — callers check res.success
+      return { success: false, error: data?.error || `HTTP ${response.status}`, ...data };
     }
 
     return data;
@@ -40,7 +50,9 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     if (err?.name === 'AbortError' || controller.signal.aborted) {
       return { success: false, _aborted: true };
     }
-    throw err;
+    // Catch ALL remaining errors (TypeError, NetworkError, DNS, CORS, etc.)
+    // Return graceful { success: false } — never throw from fetchAPI
+    return { success: false, _networkError: true, error: err?.message || 'Unknown network error' };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -303,6 +315,14 @@ export async function updateOrderStatus(orderId: string, data: { status: string;
   });
 }
 
+// ==================== MANUAL PAYMENT CONFIRMATION ====================
+export async function confirmOrderPayment(orderId: string, data: { vendorUsername: string; clientUsername: string }) {
+  return fetchAPI(`/orders/${orderId}/confirm-payment`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 // ==================== STATUS ONLINE/OFFLINE ====================
 export async function setUserStatus(username: string, online: boolean) {
   return fetchAPI('/status', {
@@ -544,4 +564,46 @@ export async function getAdminWithdrawalRequests() {
 
 export async function completeWithdrawal(withdrawalId: string) {
   return fetchAPI('/admin/withdrawal-complete', { method: 'POST', body: JSON.stringify({ withdrawalId }) });
+}
+
+// ==================== CLIENT ORDER CANCELLATION ====================
+export async function cancelOrder(orderId: string, data: { clientUsername: string; vendorUsername: string; reason?: string }) {
+  return fetchAPI(`/orders/${orderId}/cancel`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// ==================== VENDOR ORDER REJECTION ====================
+export async function rejectOrder(orderId: string, data: { vendorUsername: string; clientUsername: string; reason?: string; refundRequested?: boolean }) {
+  return fetchAPI(`/orders/${orderId}/reject`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// ==================== REFUND FLOW ====================
+export async function submitRefundDetails(orderId: string, data: { clientUsername: string; vendorUsername: string; pixKeyType: string; pixKey: string; holderName: string }) {
+  return fetchAPI(`/orders/${orderId}/refund-details`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function completeRefund(orderId: string, data: { vendorUsername: string; clientUsername: string }) {
+  return fetchAPI(`/orders/${orderId}/refund-complete`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// ==================== ORDER RATING ====================
+export async function rateOrder(orderId: string, data: { clientUsername: string; vendorUsername?: string; driverUsername?: string; rating: number; comment?: string }) {
+  return fetchAPI(`/orders/${orderId}/rate`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function getVendorRatings(username: string) {
+  return fetchAPI(`/ratings/vendor/${username}`);
+}
+
+export async function getDriverRatings(username: string) {
+  return fetchAPI(`/ratings/driver/${username}`);
+}
+
+// ==================== DRIVER REJECT DELIVERY ====================
+export async function driverRejectDelivery(orderId: string, data: { driverUsername: string; vendorUsername: string; clientUsername: string; reason?: string }) {
+  return fetchAPI(`/orders/${orderId}/driver-reject`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// ==================== ADMIN: ALL ORDERS ====================
+export async function getAdminOrders() {
+  return fetchAPI('/admin/orders');
 }

@@ -104,7 +104,7 @@ export function ClientePanel() {
           newProducts[vendor.username] = (res.products || []).filter((p: any) => p.active);
         }
       } catch (err) {
-        console.error(`Erro ao carregar produtos de ${vendor.username}:`, err);
+        /* silent — transient network error */
       }
     }
     setProductsByVendor(newProducts);
@@ -116,7 +116,7 @@ export function ClientePanel() {
       const res = await api.getClientOrders(currentUser.username);
       if (res.success) setOrders(res.orders || []);
     } catch (err) {
-      console.error("Erro ao carregar pedidos:", err);
+      /* silent */
     }
   };
 
@@ -245,12 +245,15 @@ export function ClientePanel() {
               if (statusRes.success && statusRes.invoice?.status === "paid") {
                 if (pixPollingRef.current) clearInterval(pixPollingRef.current);
                 setPaymentStatus("success");
-                // Auto-send location to driver chat after payment confirmed
+                // Confirm payment on server (updates BOTH client AND vendor orders)
+                try {
+                  await api.confirmOrderPayment(orderId, {
+                    vendorUsername: cartVendor,
+                    clientUsername: currentUser.username,
+                  });
+                } catch { /* webhook may have already done this */ }
                 if (deliveryLocation) {
-                  const locText = `📍 Minha localização de entrega: https://maps.google.com/?q=${deliveryLocation.lat},${deliveryLocation.lng}`;
-                  // We'll send location once the driver is assigned - store it for later
-                  // For now, save the location in the order data
-                  console.log("[PIX] Payment confirmed, location saved:", locText);
+                  console.log("[PIX] Payment confirmed, location saved");
                 }
                 setCart([]);
                 setDeliveryAddress("");
@@ -275,10 +278,20 @@ export function ClientePanel() {
         console.log("PixWave unavailable, completing order directly:", pixErr);
       }
 
+      // PixWave was unavailable — confirm payment directly so order moves from
+      // pending_payment → pending on BOTH client and vendor sides
+      try {
+        await api.confirmOrderPayment(orderId, {
+          vendorUsername: cartVendor,
+          clientUsername: currentUser.username,
+        });
+      } catch { /* non-critical */ }
+
       sfx.playSuccess();
       setPaymentStatus("success");
       setCart([]);
       setDeliveryAddress("");
+      setDeliveryLocation(null);
       loadOrders();
       setTimeout(() => {
         setShowPaymentModal(false);

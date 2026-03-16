@@ -50,6 +50,7 @@ import { useUserCreator } from "../hooks/useUserCreator";
 import { useCallSystem } from "../hooks/useCallSystem";
 import { IncomingCallOverlay, ActiveCallOverlay } from "../components/call-overlays";
 import { MotoristaDashboardCharts } from "../components/motorista-charts";
+import { RatingsCard } from "../components/ratings-card";
 import { NotificationBell } from "../components/notification-bell";
 import * as notif from "../services/notifications";
 import * as pwa from "../services/pwa";
@@ -686,21 +687,21 @@ export function MotoristaPanel() {
     try {
       const r = await api.getUsersCreatedBy(vendedor.username);
       if (r.success) setVendedorClients((r.users || []).filter((u: any) => u.role === "cliente"));
-    } catch (e) { console.error("Erro ao carregar clientes:", e); }
+    } catch (e) { /* silent */ }
   }, [vendedor?.username]);
 
   const loadOrders = useCallback(async () => {
     try {
       const res = await api.getDriverOrders(currentUser.username);
       if (res.success) setOrders(res.orders || []);
-    } catch (err) { console.error("Erro ao carregar entregas:", err); }
+    } catch (err) { /* silent */ }
   }, [currentUser.username]);
 
   const loadMetrics = useCallback(async () => {
     try {
       const res = await api.getMetrics(currentUser.username);
       if (res.success) setMetrics(res.metrics || {});
-    } catch (err) { console.error("Erro ao carregar metricas:", err); }
+    } catch (err) { /* silent */ }
   }, [currentUser.username]);
 
   const loadEarnings = useCallback(async () => {
@@ -708,7 +709,7 @@ export function MotoristaPanel() {
     try {
       const res = await api.getDriverEarnings(currentUser.username, earningsFilter);
       if (res.success) setEarningsData(res.earnings);
-    } catch (err) { console.error("Erro ao carregar ganhos:", err); }
+    } catch (err) { /* silent */ }
     finally { setLoadingEarnings(false); }
   }, [currentUser.username, earningsFilter]);
 
@@ -814,6 +815,35 @@ export function MotoristaPanel() {
       setShowCelebration(true);
       setTimeout(() => setShowCelebration(false), 3500);
     } catch (err: any) { sfx.playError(); alert("Erro: " + err.message); }
+  };
+
+  // ─── Driver Reject Delivery ────────────────
+  const [rejectDeliveryOrder, setRejectDeliveryOrder] = useState<any>(null);
+  const [rejectDeliveryReason, setRejectDeliveryReason] = useState("");
+  const [rejectingDelivery, setRejectingDelivery] = useState(false);
+
+  const handleRejectDelivery = async () => {
+    if (!rejectDeliveryOrder || !rejectDeliveryReason.trim()) return;
+    setRejectingDelivery(true);
+    try {
+      const res = await api.driverRejectDelivery(rejectDeliveryOrder.id, {
+        driverUsername: currentUser.username,
+        vendorUsername: rejectDeliveryOrder.vendorUsername,
+        clientUsername: rejectDeliveryOrder.clientUsername,
+        reason: rejectDeliveryReason.trim(),
+      });
+      if (res.success) {
+        sfx.playError();
+        notif.notifyOrderStatus("driver_rejected", rejectDeliveryOrder.id);
+        setOrders((prev) => prev.filter((o) => o.id !== rejectDeliveryOrder.id || !["accepted", "preparing", "delivering"].includes(o.status)));
+        loadOrders();
+        setRejectDeliveryOrder(null);
+        setRejectDeliveryReason("");
+      } else {
+        alert(res.error || "Erro ao recusar entrega");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setRejectingDelivery(false); }
   };
 
   // ─── Delivery Chat with Client ────────────────
@@ -1183,13 +1213,20 @@ export function MotoristaPanel() {
                                 <span className="text-[#00ff41] font-bold text-sm">R$ {comm.total.toFixed(2)}</span>
                               </div>
                             </div>
-                            {/* Accept button */}
-                            <motion.button whileTap={{ scale: 0.96 }} onClick={() => handleAcceptOrder(order)}
-                              className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-black"
-                              style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 25px rgba(0,255,65,0.3)" }}>
-                              <Navigation className="w-4 h-4" />
-                              Aceitar Entrega
-                            </motion.button>
+                            {/* Accept / Reject buttons */}
+                            <div className="flex gap-2">
+                              <motion.button whileTap={{ scale: 0.96 }} onClick={() => { setRejectDeliveryOrder(order); setRejectDeliveryReason(""); }}
+                                className="flex-1 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 bg-[#ff006e]/10 border border-[#ff006e]/25 text-[#ff006e] hover:bg-[#ff006e]/20 transition-all">
+                                <X className="w-4 h-4" />
+                                Recusar
+                              </motion.button>
+                              <motion.button whileTap={{ scale: 0.96 }} onClick={() => handleAcceptOrder(order)}
+                                className="flex-[2] py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-black"
+                                style={{ background: "linear-gradient(135deg, #00ff41, #00f0ff)", boxShadow: "0 0 25px rgba(0,255,65,0.3)" }}>
+                                <Navigation className="w-4 h-4" />
+                                Aceitar Entrega
+                              </motion.button>
+                            </div>
                           </div>
                         </motion.div>
                       );
@@ -1508,6 +1545,9 @@ export function MotoristaPanel() {
                 </div>
               </motion.div>
 
+              {/* Ratings Card */}
+              <RatingsCard username={currentUser.username} type="driver" glowColor="#ff00ff" />
+
               {/* Delivery History from API */}
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
                 className="bg-[#12121a]/90 border border-[#1f1f2e] rounded-xl p-3">
@@ -1791,6 +1831,57 @@ export function MotoristaPanel() {
             </motion.div>
           );
         })()}
+      </AnimatePresence>
+
+      {/* ── Reject Delivery Modal ── */}
+      <AnimatePresence>
+        {rejectDeliveryOrder && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md px-4"
+            onClick={() => setRejectDeliveryOrder(null)}>
+            <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.85, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-sm">
+              <motion.div className="absolute inset-0 rounded-2xl p-[1px]"
+                style={{ background: "conic-gradient(from 0deg, #ff006e40, transparent, #ff006e20, transparent)" }}
+                animate={{ rotate: [0, 360] }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }} />
+              <div className="relative bg-[#0c0c14] border border-[#ff006e]/20 rounded-2xl p-6 m-[1px] shadow-[0_0_60px_rgba(255,0,110,0.15)]">
+                <div className="text-center mb-4">
+                  <motion.div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#ff006e]/10 mb-3"
+                    animate={{ boxShadow: ["0 0 15px rgba(255,0,110,0.15)", "0 0 30px rgba(255,0,110,0.3)", "0 0 15px rgba(255,0,110,0.15)"] }}
+                    transition={{ duration: 2, repeat: Infinity }}>
+                    <X className="w-7 h-7 text-[#ff006e]" />
+                  </motion.div>
+                  <h3 className="text-white font-bold text-lg">Recusar Entrega</h3>
+                  <p className="text-gray-400 text-sm mt-1">Pedido #{rejectDeliveryOrder.id.slice(-6).toUpperCase()}</p>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-400 text-xs mb-1.5">Motivo da recusa *</label>
+                  <textarea
+                    value={rejectDeliveryReason}
+                    onChange={(e) => setRejectDeliveryReason(e.target.value)}
+                    placeholder="Ex: Distancia muito grande, nao posso ir agora..."
+                    className="w-full px-3 py-2.5 bg-[#0a0a12] border border-[#1f1f2e] rounded-xl text-white text-sm focus:outline-none focus:border-[#ff006e]/50 resize-none h-24 placeholder:text-gray-700"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => setRejectDeliveryOrder(null)}
+                    className="flex-1 py-3 bg-[#1f1f2e] text-gray-300 font-semibold rounded-xl text-sm hover:bg-[#2a2a3e] transition-colors">
+                    Cancelar
+                  </motion.button>
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={handleRejectDelivery}
+                    disabled={!rejectDeliveryReason.trim() || rejectingDelivery}
+                    className="flex-1 py-3 bg-gradient-to-r from-[#ff006e] to-[#ff0040] text-white font-bold rounded-xl text-sm shadow-[0_0_20px_rgba(255,0,110,0.3)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                    {rejectingDelivery ? (
+                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+                    ) : "Recusar"}
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* ── Logout Confirmation Modal ── */}

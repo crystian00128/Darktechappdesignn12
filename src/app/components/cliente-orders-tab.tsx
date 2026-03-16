@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   ShoppingBag, Package, RefreshCw, Clock, Check, Truck, MapPin,
   Navigation, CheckCircle2, X, ChevronDown, ChevronUp, MessageCircle, LocateFixed, Send, ChevronLeft, ArrowRight, Timer,
+  Star, Ban, AlertTriangle, Loader,
 } from "lucide-react";
 import * as api from "../services/api";
 
-const ORDER_VISIBILITY_MINUTES = 15;
+const ORDER_VISIBILITY_MINUTES = 24 * 60;
 
 // Simplified steps for the progress tracker (merging sub-statuses)
 const TRACKER_STEPS = [
@@ -24,7 +25,8 @@ function getTrackerIndex(status: string): number {
 
 function getStatusInfo(status: string) {
   const map: Record<string, { label: string; color: string; description: string }> = {
-    pending: { label: "Pendente", color: "#ff9f00", description: "Aguardando confirmação do vendedor" },
+    pending_payment: { label: "Aguardando Pagamento", color: "#f59e0b", description: "Aguardando confirmação do pagamento PIX" },
+    pending: { label: "Pendente", color: "#ff9f00", description: "Pagamento confirmado! Aguardando aceite do vendedor" },
     accepted: { label: "Aceito", color: "#00f0ff", description: "Pedido aceito! Em breve será preparado" },
     preparing: { label: "Preparando", color: "#8b5cf6", description: "Seu pedido está sendo preparado" },
     delivering: { label: "Enviado", color: "#ff9f00", description: "Pedido atribuído a um motorista" },
@@ -53,21 +55,134 @@ function useOrderCountdown(createdAt: string, isActive: boolean) {
     return () => clearInterval(interval);
   }, [createdAt, isActive]);
 
-  const mins = Math.floor(remaining / 60000);
+  const hours = Math.floor(remaining / 3600000);
+  const mins = Math.floor((remaining % 3600000) / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
   const expired = remaining <= 0 && isActive;
-  const formatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  const formatted = hours > 0
+    ? `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+    : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   const progress = isActive ? remaining / (ORDER_VISIBILITY_MINUTES * 60 * 1000) : 0;
-  return { remaining, mins, secs, expired, formatted, progress };
+  return { remaining, hours, mins, secs, expired, formatted, progress };
 }
 
-function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (order: any) => void }) {
+function RefundBankForm({ order, currentUsername, onSuccess }: { order: any; currentUsername?: string; onSuccess: () => void }) {
+  const [pixKeyType, setPixKeyType] = useState("cpf");
+  const [pixKey, setPixKey] = useState("");
+  const [holderName, setHolderName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!pixKey.trim() || !holderName.trim() || !currentUsername) return;
+    setSubmitting(true);
+    try {
+      const res = await api.submitRefundDetails(order.id, {
+        clientUsername: currentUsername,
+        vendorUsername: order.vendorUsername,
+        pixKeyType,
+        pixKey: pixKey.trim(),
+        holderName: holderName.trim(),
+      });
+      if (res.success) {
+        setSubmitted(true);
+        setTimeout(() => onSuccess(), 1500);
+      } else {
+        alert(res.error || "Erro ao enviar dados");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setSubmitting(false); }
+  };
+
+  if (submitted) {
+    return (
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+        className="p-4 bg-[#00ff41]/5 border border-[#00ff41]/20 rounded-xl mb-3 text-center">
+        <CheckCircle2 className="w-8 h-8 text-[#00ff41] mx-auto mb-2" />
+        <p className="text-[#00ff41] font-bold text-xs">Dados Enviados com Sucesso!</p>
+        <p className="text-gray-400 text-[10px] mt-1">O reembolso será feito em até 24 horas.</p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      className="p-3.5 bg-[#ff9f00]/5 border border-[#ff9f00]/25 rounded-xl mb-3">
+      <div className="flex items-center gap-2 mb-3">
+        <AlertTriangle className="w-4 h-4 text-[#ff9f00]" />
+        <p className="text-[#ff9f00] font-bold text-xs">Preencha seus dados para Reembolso</p>
+      </div>
+      <p className="text-gray-300 text-[10px] mb-3 leading-relaxed">
+        Seu pedido foi cancelado pelo vendedor. Preencha seus dados bancários abaixo para receber o reembolso de <span className="text-white font-bold">R$ {Number(order.total).toFixed(2)}</span> em até <span className="text-[#ff9f00] font-bold">24 horas</span>.
+      </p>
+      <div className="space-y-2.5">
+        <div>
+          <label className="text-gray-500 text-[9px] font-medium block mb-1.5">Tipo de Chave PIX</label>
+          <div className="grid grid-cols-4 gap-1.5">
+            {[
+              { value: "cpf", label: "CPF" },
+              { value: "cnpj", label: "CNPJ" },
+              { value: "email", label: "E-mail" },
+              { value: "phone", label: "Telefone" },
+            ].map((opt) => (
+              <button key={opt.value}
+                onClick={() => setPixKeyType(opt.value)}
+                className={`py-1.5 rounded-lg text-[9px] font-bold border transition-all ${pixKeyType === opt.value
+                  ? "bg-[#00f0ff]/15 border-[#00f0ff]/40 text-[#00f0ff]"
+                  : "bg-[#12121a] border-[#1f1f2e] text-gray-500"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-gray-500 text-[9px] font-medium block mb-1">Chave PIX</label>
+          <input value={pixKey} onChange={(e) => setPixKey(e.target.value)}
+            placeholder={pixKeyType === "cpf" ? "000.000.000-00" : pixKeyType === "email" ? "email@exemplo.com" : pixKeyType === "phone" ? "(00) 00000-0000" : "00.000.000/0000-00"}
+            className="w-full px-3 py-2 bg-[#0a0a12] border border-[#1f1f2e] rounded-xl text-white text-xs focus:outline-none focus:border-[#00f0ff]/40 placeholder-gray-600" />
+        </div>
+        <div>
+          <label className="text-gray-500 text-[9px] font-medium block mb-1">Nome Completo do Titular</label>
+          <input value={holderName} onChange={(e) => setHolderName(e.target.value)}
+            placeholder="Seu nome completo"
+            className="w-full px-3 py-2 bg-[#0a0a12] border border-[#1f1f2e] rounded-xl text-white text-xs focus:outline-none focus:border-[#00f0ff]/40 placeholder-gray-600" />
+        </div>
+      </div>
+      <motion.button whileTap={{ scale: 0.95 }}
+        disabled={submitting || !pixKey.trim() || !holderName.trim()}
+        onClick={handleSubmit}
+        className="w-full mt-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-30"
+        style={{ background: "linear-gradient(135deg, #ff9f00, #ff006e)", boxShadow: "0 0 15px rgba(255,159,0,0.2)" }}
+      >
+        {submitting ? <Loader className="w-3.5 h-3.5 animate-spin text-white" /> : <Send className="w-3.5 h-3.5 text-white" />}
+        <span className="text-white">{submitting ? "Enviando..." : "Confirmar Dados para Reembolso"}</span>
+      </motion.button>
+    </motion.div>
+  );
+}
+
+function OrderTrackingCard({ order, onOpenChat, onCancel, onRate, currentUsername, onRefundSubmitted }: { order: any; onOpenChat?: (order: any) => void; onCancel?: (order: any) => void; onRate?: (order: any) => void; currentUsername?: string; onRefundSubmitted?: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const statusInfo = getStatusInfo(order.status);
+  const rawStatusInfo = getStatusInfo(order.status);
+  const isRefund = order.status === "cancelled" && !!order.refundStatus;
+  const statusInfo = isRefund
+    ? order.refundStatus === "completed"
+      ? { label: "Reembolso Concluído!", color: "#00ff41", description: "Reembolso realizado com sucesso! Verifique sua conta." }
+      : order.refundStatus === "awaiting_vendor_transfer"
+        ? { label: "Aguardando Reembolso", color: "#ff9f00", description: "Seus dados foram enviados. O vendedor realizará o reembolso em até 24 horas." }
+        : order.refundStatus === "awaiting_client_details"
+          ? { label: "Preencha seus dados para Reembolso", color: "#ff9f00", description: "Pedido cancelado pelo vendedor. Preencha seus dados bancários para receber o reembolso em até 24 horas." }
+          : { label: "Cancelado — Reembolso Pendente", color: "#ff9f00", description: "Pedido cancelado pelo vendedor. Seu reembolso será processado em breve." }
+    : rawStatusInfo;
   const currentStepIdx = getTrackerIndex(order.status);
   const isActive = !["delivered", "cancelled"].includes(order.status);
+  const isPendingPayment = order.status === "pending_payment";
   const isCancelled = order.status === "cancelled";
-  const countdown = useOrderCountdown(order.createdAt, isActive);
+  const canCancel = ["pending_payment", "pending"].includes(order.status);
+  const canRate = order.status === "delivered" && !order.rating;
+  const countdown = useOrderCountdown(order.createdAt, isPendingPayment);
 
   // Time elapsed since creation
   const elapsed = (() => {
@@ -139,8 +254,8 @@ function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (or
             </div>
           </div>
 
-          {/* Countdown Timer for active orders */}
-          {isActive && (
+          {/* Countdown Timer — only for pending_payment orders (PIX expiry) */}
+          {isPendingPayment && (
             <div className="flex items-center gap-2 mb-2 px-0.5">
               <Timer className="w-3 h-3 text-gray-500" />
               <div className="flex-1 h-1.5 bg-[#1f1f2e] rounded-full overflow-hidden">
@@ -148,13 +263,13 @@ function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (or
                   className="h-full rounded-full"
                   style={{
                     width: `${countdown.progress * 100}%`,
-                    background: countdown.mins < 3 ? "linear-gradient(90deg, #ff006e, #ff9f00)" : `linear-gradient(90deg, ${statusInfo.color}80, ${statusInfo.color})`,
+                    background: countdown.remaining < 30 * 60 * 1000 ? "linear-gradient(90deg, #ff006e, #ff9f00)" : `linear-gradient(90deg, ${statusInfo.color}80, ${statusInfo.color})`,
                   }}
                 />
               </div>
               <motion.span
-                className={`text-[10px] font-mono font-bold ${countdown.mins < 3 ? "text-[#ff006e]" : "text-gray-400"}`}
-                animate={countdown.mins < 3 ? { opacity: [1, 0.4, 1] } : {}}
+                className={`text-[10px] font-mono font-bold ${countdown.remaining < 30 * 60 * 1000 ? "text-[#ff006e]" : "text-gray-400"}`}
+                animate={countdown.remaining < 30 * 60 * 1000 ? { opacity: [1, 0.4, 1] } : {}}
                 transition={{ duration: 1, repeat: Infinity }}
               >
                 {countdown.formatted}
@@ -286,6 +401,87 @@ function OrderTrackingCard({ order, onOpenChat }: { order: any; onOpenChat?: (or
             </motion.div>
           )}
 
+          {/* Rating Display (if already rated) */}
+          {order.rating && (
+            <div className="flex items-center gap-2 p-2.5 bg-[#ff9f00]/5 border border-[#ff9f00]/15 rounded-xl mb-3">
+              <div className="flex gap-0.5">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <Star key={s} className={`w-3.5 h-3.5 ${s <= order.rating ? "text-[#ff9f00] fill-[#ff9f00]" : "text-gray-700"}`} />
+                ))}
+              </div>
+              <span className="text-[#ff9f00] text-[10px] font-bold">{order.rating}/5</span>
+              {order.ratingComment && <span className="text-gray-400 text-[10px] truncate flex-1">— {order.ratingComment}</span>}
+            </div>
+          )}
+
+          {/* Rate Button (after delivery, if not rated yet) */}
+          {canRate && onRate && (
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              onClick={() => onRate(order)}
+              className="w-full mb-3 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 bg-gradient-to-r from-[#ff9f00]/15 to-[#ff006e]/10 border border-[#ff9f00]/25 text-[#ff9f00] hover:from-[#ff9f00]/25 hover:to-[#ff006e]/20 transition-all"
+            >
+              <Star className="w-3.5 h-3.5" />
+              Avaliar Pedido
+            </motion.button>
+          )}
+
+          {/* Cancellation / Refund Display */}
+          {isCancelled && order.cancelReason && !order.refundStatus && (
+            <div className="flex items-start gap-2 p-2.5 bg-[#ff006e]/5 border border-[#ff006e]/15 border rounded-xl mb-3">
+              <AlertTriangle className="w-3.5 h-3.5 text-[#ff006e] shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-[#ff006e] text-[10px] font-bold">
+                  {order.cancelledBy === "vendor" ? "Recusado pelo vendedor"
+                    : order.cancelledBy === "client" ? "Cancelado por você"
+                    : order.cancelReason === "pix_expired" ? "PIX expirado" : "Cancelado"}
+                </p>
+                {order.cancelReason !== "cancelled_by_client" && order.cancelReason !== "rejected_by_vendor" && order.cancelReason !== "pix_expired" && (
+                  <p className="text-gray-400 text-[10px]">{order.cancelReason}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Refund: Awaiting vendor transfer */}
+          {isCancelled && order.refundStatus === "awaiting_vendor_transfer" && (
+            <div className="p-3 bg-[#ff9f00]/5 border border-[#ff9f00]/20 rounded-xl mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Loader className="w-3.5 h-3.5 animate-spin text-[#ff9f00]" />
+                <p className="text-[#ff9f00] text-[11px] font-bold">Aguardando Reembolso</p>
+              </div>
+              <p className="text-gray-400 text-[10px]">Seus dados foram enviados com sucesso! O vendedor realizará o reembolso de <span className="text-white font-bold">R$ {Number(order.total).toFixed(2)}</span> em até 24 horas.</p>
+            </div>
+          )}
+
+          {/* Refund: Completed! */}
+          {isCancelled && order.refundStatus === "completed" && (
+            <div className="p-3 bg-[#00ff41]/5 border border-[#00ff41]/20 rounded-xl mb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#00ff41]" />
+                <p className="text-[#00ff41] text-[11px] font-bold">Reembolso Concluído com Sucesso!</p>
+              </div>
+              <p className="text-gray-400 text-[10px] mt-1">O valor de <span className="text-white font-bold">R$ {Number(order.total).toFixed(2)}</span> foi reembolsado. Verifique sua conta bancária.</p>
+            </div>
+          )}
+
+          {/* Refund: Client needs to fill bank details */}
+          {isCancelled && order.refundStatus === "awaiting_client_details" && (
+            <RefundBankForm order={order} currentUsername={currentUsername} onSuccess={() => onRefundSubmitted?.()} />
+          )}
+
+          {/* Cancel Button (for pending orders) */}
+          {canCancel && onCancel && (
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              onClick={() => onCancel(order)}
+              className="w-full mb-3 py-2 rounded-xl font-bold text-[11px] flex items-center justify-center gap-2 bg-[#ff006e]/5 border border-[#ff006e]/20 text-[#ff006e] hover:bg-[#ff006e]/10 transition-all"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              Cancelar Pedido
+            </motion.button>
+          )}
+
           {/* Chat with Driver Button */}
           {order.driverUsername && ["driver_accepted", "on_the_way"].includes(order.status) && onOpenChat && (
             <motion.button
@@ -370,7 +566,7 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUser
 }) {
   // Auto-polling for active orders
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hasActiveOrders = orders.some((o) => !["delivered", "cancelled"].includes(o.status));
+  const hasActiveOrders = orders.some((o) => !["delivered", "cancelled"].includes(o.status)) || orders.some((o) => o.refundStatus && o.refundStatus !== "completed");
 
   // Delivery chat state
   const [chatOrder, setChatOrder] = useState<any>(null);
@@ -379,6 +575,60 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUser
   const [sendingLoc, setSendingLoc] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cancel state
+  const [cancelOrder, setCancelOrder] = useState<any>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+
+  // Rating state
+  const [ratingOrder, setRatingOrder] = useState<any>(null);
+  const [ratingStars, setRatingStars] = useState(5);
+  const [ratingComment, setRatingComment] = useState("");
+  const [submittingRating, setSubmittingRating] = useState(false);
+
+  const handleCancelOrder = async () => {
+    if (!cancelOrder || !currentUsername) return;
+    setCancelling(true);
+    try {
+      const res = await api.cancelOrder(cancelOrder.id, {
+        clientUsername: currentUsername,
+        vendorUsername: cancelOrder.vendorUsername,
+        reason: cancelReason.trim() || undefined,
+      });
+      if (res.success) {
+        setCancelOrder(null);
+        setCancelReason("");
+        loadOrders();
+      } else {
+        alert(res.error || "Erro ao cancelar pedido");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setCancelling(false); }
+  };
+
+  const handleSubmitRating = async () => {
+    if (!ratingOrder || !currentUsername) return;
+    setSubmittingRating(true);
+    try {
+      const res = await api.rateOrder(ratingOrder.id, {
+        clientUsername: currentUsername,
+        vendorUsername: ratingOrder.vendorUsername,
+        driverUsername: ratingOrder.driverUsername || undefined,
+        rating: ratingStars,
+        comment: ratingComment.trim() || undefined,
+      });
+      if (res.success) {
+        setRatingOrder(null);
+        setRatingStars(5);
+        setRatingComment("");
+        loadOrders();
+      } else {
+        alert(res.error || "Erro ao avaliar");
+      }
+    } catch { alert("Erro de rede"); }
+    finally { setSubmittingRating(false); }
+  };
 
   const loadChatMsgs = useCallback(async () => {
     if (!chatOrder?.driverUsername || !currentUsername) return;
@@ -507,7 +757,7 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUser
               </div>
               <div className="space-y-3">
                 {[...activeOrders].reverse().map((order) => (
-                  <OrderTrackingCard key={order.id} order={order} onOpenChat={currentUsername ? setChatOrder : undefined} />
+                  <OrderTrackingCard key={order.id} order={order} onOpenChat={currentUsername ? setChatOrder : undefined} onCancel={setCancelOrder} onRate={setRatingOrder} currentUsername={currentUsername} onRefundSubmitted={loadOrders} />
                 ))}
               </div>
             </div>
@@ -523,13 +773,130 @@ export function ClienteOrdersTab({ orders, loadOrders, statusLabels, currentUser
               </div>
               <div className="space-y-2.5">
                 {[...completedOrders].reverse().slice(0, 10).map((order) => (
-                  <OrderTrackingCard key={order.id} order={order} />
+                  <OrderTrackingCard key={order.id} order={order} onRate={setRatingOrder} currentUsername={currentUsername} onRefundSubmitted={loadOrders} />
                 ))}
               </div>
             </div>
           )}
         </div>
       )}
+
+      {/* ═══ Cancel Order Modal ═══ */}
+      <AnimatePresence>
+        {cancelOrder && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={() => !cancelling && setCancelOrder(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#0c0c14] border border-[#ff006e]/20 rounded-2xl p-5 w-full max-w-sm shadow-[0_0_40px_rgba(255,0,110,0.1)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-[#ff006e]/10 border border-[#ff006e]/20 flex items-center justify-center">
+                  <Ban className="w-5 h-5 text-[#ff006e]" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Cancelar Pedido</h3>
+                  <p className="text-gray-500 text-[10px]">#{cancelOrder.id?.slice(-6).toUpperCase()} — R$ {Number(cancelOrder.total).toFixed(2)}</p>
+                </div>
+              </div>
+              <p className="text-gray-400 text-xs mb-3">Tem certeza que deseja cancelar este pedido? Esta ação não pode ser desfeita.</p>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Motivo do cancelamento (opcional)"
+                className="w-full px-3 py-2.5 bg-[#12121a] border border-[#1f1f2e] rounded-xl text-white text-xs focus:outline-none focus:border-[#ff006e]/40 placeholder-gray-600 resize-none h-20 mb-4"
+              />
+              <div className="flex gap-2">
+                <motion.button whileTap={{ scale: 0.95 }} disabled={cancelling}
+                  onClick={() => { setCancelOrder(null); setCancelReason(""); }}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-[#1f1f2e] text-gray-400 hover:bg-[#1f1f2e]/50 transition-all disabled:opacity-50"
+                >
+                  Voltar
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.95 }} disabled={cancelling}
+                  onClick={handleCancelOrder}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-[#ff006e]/15 border border-[#ff006e]/30 text-[#ff006e] hover:bg-[#ff006e]/25 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {cancelling ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                  {cancelling ? "Cancelando..." : "Confirmar Cancelamento"}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ Rating Modal ═══ */}
+      <AnimatePresence>
+        {ratingOrder && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={() => !submittingRating && setRatingOrder(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#0c0c14] border border-[#ff9f00]/20 rounded-2xl p-5 w-full max-w-sm shadow-[0_0_40px_rgba(255,159,0,0.1)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-[#ff9f00]/10 border border-[#ff9f00]/20 flex items-center justify-center">
+                  <Star className="w-5 h-5 text-[#ff9f00]" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Avaliar Pedido</h3>
+                  <p className="text-gray-500 text-[10px]">#{ratingOrder.id?.slice(-6).toUpperCase()} — R$ {Number(ratingOrder.total).toFixed(2)}</p>
+                </div>
+              </div>
+
+              {/* Stars */}
+              <div className="flex items-center justify-center gap-2 mb-4">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <motion.button
+                    key={s}
+                    whileHover={{ scale: 1.2 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setRatingStars(s)}
+                    className="p-1"
+                  >
+                    <Star className={`w-8 h-8 transition-colors ${s <= ratingStars ? "text-[#ff9f00] fill-[#ff9f00]" : "text-gray-700 hover:text-gray-500"}`} />
+                  </motion.button>
+                ))}
+              </div>
+              <p className="text-center text-gray-400 text-xs mb-4">
+                {ratingStars === 1 ? "Péssimo" : ratingStars === 2 ? "Ruim" : ratingStars === 3 ? "Regular" : ratingStars === 4 ? "Bom" : "Excelente!"}
+              </p>
+
+              <textarea
+                value={ratingComment}
+                onChange={(e) => setRatingComment(e.target.value)}
+                placeholder="Deixe um comentário (opcional)"
+                className="w-full px-3 py-2.5 bg-[#12121a] border border-[#1f1f2e] rounded-xl text-white text-xs focus:outline-none focus:border-[#ff9f00]/40 placeholder-gray-600 resize-none h-20 mb-4"
+              />
+
+              <div className="flex gap-2">
+                <motion.button whileTap={{ scale: 0.95 }} disabled={submittingRating}
+                  onClick={() => { setRatingOrder(null); setRatingStars(5); setRatingComment(""); }}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-[#1f1f2e] text-gray-400 hover:bg-[#1f1f2e]/50 transition-all disabled:opacity-50"
+                >
+                  Cancelar
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.95 }} disabled={submittingRating}
+                  onClick={handleSubmitRating}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-[#ff9f00]/20 to-[#ff006e]/15 border border-[#ff9f00]/30 text-[#ff9f00] hover:from-[#ff9f00]/30 hover:to-[#ff006e]/25 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {submittingRating ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Star className="w-3.5 h-3.5" />}
+                  {submittingRating ? "Enviando..." : `Enviar ${ratingStars} Estrela(s)`}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ═══ Delivery Chat Fullscreen Overlay ═══ */}
       <AnimatePresence>

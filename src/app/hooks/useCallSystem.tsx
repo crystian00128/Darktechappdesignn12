@@ -612,17 +612,12 @@ export function useCallSystem(currentUsername: string) {
         });
       }
     } catch (err: any) {
-      // Silence transient network errors and timeouts
-      if (
-        err?.name === 'AbortError' ||
-        err?._aborted ||
-        (err instanceof TypeError && err.message?.includes('Failed to fetch')) ||
-        (typeof err === 'string' && err.includes('timeout')) ||
-        (err?.message && /timeout|aborted/i.test(err.message))
-      ) {
-        return;
+      // Silence ALL transient polling errors — this runs every 2s and
+      // network hiccups, timeouts, server 5xx, rate limits etc. are expected
+      // and non-critical. Only log in dev at debug level.
+      if (typeof window !== 'undefined' && (window as any).__DEBUG_CALLS) {
+        console.debug("[CallSystem] poll error (silenced):", err?.message || err);
       }
-      console.error("Erro polling chamadas:", err);
     }
   }, []); // No deps — reads everything from refs
 
