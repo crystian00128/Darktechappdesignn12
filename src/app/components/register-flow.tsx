@@ -541,7 +541,6 @@ export function RegisterFlow({ userType, onComplete }: RegisterFlowProps) {
         whatsapp: formData.whatsapp || undefined,
       });
       try { await api.repairLinks(); } catch {}
-      try { await api.debugLink(formData.username.toLowerCase()); } catch {}
 
       sfx.playSuccess();
       localStorage.setItem("currentUser", JSON.stringify({

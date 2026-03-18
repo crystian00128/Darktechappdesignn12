@@ -63,10 +63,6 @@ export async function initDatabase() {
   return fetchAPI('/init', { method: 'POST' });
 }
 
-export async function resetDatabase() {
-  return fetchAPI('/reset', { method: 'POST' });
-}
-
 // ==================== LOGIN ====================
 export async function loginStep1(username: string) {
   return fetchAPI('/login/step1', {
@@ -340,11 +336,6 @@ export async function getMetrics(username: string) {
   return fetchAPI(`/metrics/${username}`);
 }
 
-// ==================== LIMPEZA ====================
-export async function cleanup() {
-  return fetchAPI('/cleanup', { method: 'POST' });
-}
-
 // ==================== HIERARQUIA ====================
 export async function getHierarchy() {
   return fetchAPI('/hierarchy');
@@ -353,11 +344,6 @@ export async function getHierarchy() {
 // ==================== DELETAR VENDEDOR EM CASCATA ====================
 export async function deleteVendorCascade(username: string) {
   return fetchAPI(`/vendor/${username}`, { method: 'DELETE' });
-}
-
-// ==================== DIAGNÓSTICO DE VÍNCULO ====================
-export async function debugLink(username: string) {
-  return fetchAPI(`/debug/link/${username}`);
 }
 
 // ==================== PIXWAVE / DEPIX ====================

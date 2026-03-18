@@ -1,11 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Zap, Lock, Code, ArrowRight, Database, Trash2, Fingerprint, Shield, Eye, ScanFace, Camera, AlertTriangle, X, Check } from "lucide-react";
+import { Zap, Lock, Code, ArrowRight, Fingerprint, Shield, Eye, ScanFace, Camera, AlertTriangle, X, Check } from "lucide-react";
 import * as api from "../services/api";
 import * as sfx from "../services/sounds";
 import { registerPushSubscription } from "../services/pwa";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // Interactive particle that follows mouse
 function useMousePosition() {
@@ -28,11 +27,7 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [userData, setUserData] = useState<any>(null);
-  const [initLoading, setInitLoading] = useState(false);
-  const [initMessage, setInitMessage] = useState("");
-  const [cleanupLoading, setCleanupLoading] = useState(false);
   const [ripples, setRipples] = useState<{ x: number; y: number; id: number }[]>([]);
-  const [showAdmin, setShowAdmin] = useState(false);
   const [faceStream, setFaceStream] = useState<MediaStream | null>(null);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceVerifying, setFaceVerifying] = useState(false);
@@ -69,71 +64,7 @@ export function LoginPage() {
     setTimeout(() => setRipples((prev) => prev.filter((r) => r.id !== id)), 1500);
   }, []);
 
-  const handleInitDatabase = async () => {
-    setInitLoading(true);
-    setInitMessage("");
-    try {
-      const response = await api.initDatabase();
-      setInitMessage("OK " + response.message);
-      setTimeout(() => setInitMessage(""), 3000);
-    } catch (error: any) {
-      setInitMessage("ERRO: " + error.message);
-    } finally {
-      setInitLoading(false);
-    }
-  };
 
-  const handleDebugDB = async () => {
-    try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-42377006/debug/all`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}` },
-      });
-      const result = await response.json();
-      if (result.success) {
-        alert(`BANCO DE DADOS:\n\nAdmin: ${result.data.admin ? "EXISTE" : "NAO EXISTE"}\nVendedores: ${result.data.vendedores?.length || 0}\nClientes: ${result.data.clientes?.length || 0}\nMotoristas: ${result.data.motoristas?.length || 0}\nCodigos Vendedor: ${result.data.codesVendedor?.length || 0}\nCodigos Cliente: ${result.data.codesCliente?.length || 0}\nCodigos Motorista: ${result.data.codesMotorista?.length || 0}`);
-      } else {
-        alert("Erro: " + result.error);
-      }
-    } catch (error: any) {
-      alert("Erro de conexao: " + error.message);
-    }
-  };
-
-  const handleForceInit = async () => {
-    setInitLoading(true);
-    try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-42377006/force-init`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}` },
-      });
-      const result = await response.json();
-      if (result.success) {
-        setInitMessage("OK " + result.message);
-        alert("Admin criado com sucesso!");
-      } else {
-        setInitMessage("ERRO: " + result.error);
-      }
-    } catch (error: any) {
-      setInitMessage("ERRO: " + error.message);
-    } finally {
-      setInitLoading(false);
-    }
-  };
-
-  const handleCleanup = async () => {
-    if (!confirm("ATENCAO: Isso vai remover TODAS as contas (exceto admin) e TODOS os codigos. Continuar?")) return;
-    setCleanupLoading(true);
-    try {
-      const response = await api.cleanup();
-      setInitMessage(`OK ${response.message}`);
-      alert(`Limpeza concluida!\nVendedores: ${response.removed?.vendedores || 0}\nClientes: ${response.removed?.clientes || 0}\nMotoristas: ${response.removed?.motoristas || 0}`);
-    } catch (error: any) {
-      setInitMessage("ERRO: " + error.message);
-    } finally {
-      setCleanupLoading(false);
-    }
-  };
 
   const handleUsernameSubmit = async () => {
     if (!username.trim()) { sfx.playWarning(); setError("Digite um nome de usuario"); return; }
@@ -1352,77 +1283,7 @@ export function LoginPage() {
           </motion.p>
         </motion.div>
 
-        {/* Admin Tools Toggle */}
-        <div className="text-center mt-2 shrink-0">
-          <motion.button
-            onClick={() => setShowAdmin(!showAdmin)}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="text-gray-700 text-xs hover:text-gray-500 transition-colors"
-          >
-            {showAdmin ? "Ocultar Ferramentas" : "Ferramentas Admin"}
-          </motion.button>
-        </div>
 
-        <AnimatePresence>
-          {showAdmin && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden mt-2 shrink-0 w-full"
-            >
-              <div className="flex gap-2 flex-wrap justify-center">
-                <motion.button
-                  onClick={handleInitDatabase}
-                  disabled={initLoading}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-[#0c0c14] border border-[#00f0ff]/30 text-[#00f0ff] rounded-lg text-xs font-medium hover:border-[#00f0ff] hover:shadow-[0_0_15px_rgba(0,240,255,0.15)] transition-all disabled:opacity-50"
-                >
-                  <Database className="w-3 h-3" />
-                  {initLoading ? "..." : "Inicializar"}
-                </motion.button>
-                <motion.button
-                  onClick={handleDebugDB}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-[#0c0c14] border border-[#8b5cf6]/30 text-[#8b5cf6] rounded-lg text-xs font-medium hover:border-[#8b5cf6] hover:shadow-[0_0_15px_rgba(139,92,246,0.15)] transition-all"
-                >
-                  Ver Dados
-                </motion.button>
-                <motion.button
-                  onClick={handleForceInit}
-                  disabled={initLoading}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-[#0c0c14] border border-[#ff9f00]/30 text-[#ff9f00] rounded-lg text-xs font-medium hover:border-[#ff9f00] hover:shadow-[0_0_15px_rgba(255,159,0,0.15)] transition-all disabled:opacity-50"
-                >
-                  Forcar Init
-                </motion.button>
-                <motion.button
-                  onClick={handleCleanup}
-                  disabled={cleanupLoading}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-[#0c0c14] border border-[#ff006e]/30 text-[#ff006e] rounded-lg text-xs font-medium hover:border-[#ff006e] hover:shadow-[0_0_15px_rgba(255,0,110,0.15)] transition-all disabled:opacity-50"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  {cleanupLoading ? "..." : "Limpar"}
-                </motion.button>
-              </div>
-              {initMessage && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className={`mt-2 text-xs text-center ${initMessage.startsWith("OK") ? "text-[#00ff41]" : "text-[#ff006e]"}`}
-                >
-                  {initMessage}
-                </motion.p>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
       </motion.div>
     </div>
   );

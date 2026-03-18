@@ -33,16 +33,9 @@ export default function App() {
     // ═══ INIT DATABASE ═══
     const initDB = async () => {
       try {
-        console.log("Inicializando banco de dados...");
-        const response = await api.initDatabase();
-        if (response.success) {
-          console.log("Banco inicializado:", response.message);
-          console.log("Login Admin: username='admin', PIN='414243'");
-        } else {
-          console.log("Init DB retornou sem sucesso (pode ser cold-start):", response.error || "");
-        }
+        await api.initDatabase();
       } catch (error) {
-        // Silent — fetchAPI never throws, but just in case
+        // Silent init
       }
     };
     initDB();

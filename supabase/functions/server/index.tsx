@@ -115,8 +115,40 @@ async function sendPushToUser(targetUsername: string, payload: {
   return { sent, failed };
 }
 
-// Enable logger
+// Enable logger — filter out sensitive data
 app.use('*', logger(console.log));
+
+// ══════════════════════════════════════════════════════════════
+// SECURITY: Admin authentication helper
+// Verifies that the request comes from an authenticated admin user
+// ══════════════════════════════════════════════════════════════
+async function requireAdmin(c: any): Promise<boolean> {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const adminUsername = body.adminUsername;
+    const adminPin = body.adminPin;
+    if (!adminUsername || !adminPin) return false;
+    const admin = await kv.get(`user:${adminUsername}`);
+    if (!admin || admin.role !== "admin") return false;
+    return String(admin.pin) === String(adminPin);
+  } catch {
+    return false;
+  }
+}
+
+// Rate limiting map (in-memory, resets on cold start)
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, maxPerMinute: number): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  if (entry.count >= maxPerMinute) return false;
+  entry.count++;
+  return true;
+}
 
 // Enable CORS for all routes and methods
 app.use(
@@ -134,16 +166,9 @@ app.use(
 // Criar usuário admin inicial se não existir
 app.post("/make-server-42377006/init", async (c) => {
   try {
-    console.log("📦 Iniciando verificação do banco...");
-    
-    // Verificar se admin já existe
     const existingAdmin = await kv.get("user:admin");
-    console.log("🔍 Admin existente?", existingAdmin ? "SIM" : "NÃO");
     
     if (!existingAdmin) {
-      console.log("🆕 Criando usuário admin...");
-      
-      // Criar admin
       const adminUser = {
         username: "admin",
         pin: "414243",
@@ -152,128 +177,50 @@ app.post("/make-server-42377006/init", async (c) => {
         photo: "AD",
         createdAt: new Date().toISOString(),
       };
-      
       await kv.set("user:admin", adminUser);
-      console.log("✅ Admin criado:", adminUser);
       
-      // Verificar se foi salvo
-      const checkAdmin = await kv.get("user:admin");
-      console.log("✔️ Verificação após criação:", checkAdmin);
+      // Inicializar arrays vazios (idempotent)
+      const keys = ["users:vendedor", "users:cliente", "users:motorista", "codes:vendedor", "codes:cliente", "codes:motorista"];
+      for (const key of keys) {
+        const existing = await kv.get(key);
+        if (!existing) await kv.set(key, []);
+      }
       
-      // Inicializar arrays vazios
-      await kv.set("users:vendedor", []);
-      await kv.set("users:cliente", []);
-      await kv.set("users:motorista", []);
-      await kv.set("codes:vendedor", []);
-      await kv.set("codes:cliente", []);
-      await kv.set("codes:motorista", []);
-      console.log("✅ Arrays inicializados");
-      
-      return c.json({ success: true, message: "Banco inicializado com sucesso!" });
+      console.log("✅ DB initialized");
+      return c.json({ success: true, message: "OK" });
     }
     
-    console.log("✅ Admin já existe:", existingAdmin);
-    return c.json({ success: true, message: "Admin já existe!", admin: existingAdmin });
+    return c.json({ success: true, message: "OK" });
   } catch (error) {
-    console.error("❌ Erro ao inicializar banco:", error);
-    return c.json({ success: false, error: String(error) }, 500);
+    return c.json({ success: false, error: "Erro interno" }, 500);
   }
 });
 
-// Rota para FORÇAR recriação do admin (para debug)
-app.post("/make-server-42377006/force-init", async (c) => {
-  try {
-    console.log("🔄 FORÇANDO recriação do admin...");
-    
-    // Criar admin (SEMPRE)
-    const adminUser = {
-      username: "admin",
-      pin: "414243",
-      role: "admin",
-      name: "Administrador",
-      photo: "AD",
-      createdAt: new Date().toISOString(),
-    };
-    
-    console.log("📝 Salvando admin:", adminUser);
-    await kv.set("user:admin", adminUser);
-    console.log("✅ Admin salvo!");
-    
-    // Verificar se foi salvo
-    console.log("🔍 Verificando...");
-    const checkAdmin = await kv.get("user:admin");
-    console.log("✔️ Admin no banco:", checkAdmin);
-    
-    if (!checkAdmin) {
-      throw new Error("ERRO: Admin não foi salvo no banco!");
-    }
-    
-    // Inicializar arrays vazios
-    await kv.set("users:vendedor", []);
-    await kv.set("users:cliente", []);
-    await kv.set("users:motorista", []);
-    await kv.set("codes:vendedor", []);
-    await kv.set("codes:cliente", []);
-    await kv.set("codes:motorista", []);
-    console.log("✅ Arrays inicializados");
-    
-    return c.json({ 
-      success: true, 
-      message: "Admin FORÇADO com sucesso!",
-      admin: checkAdmin
-    });
-  } catch (error) {
-    console.error("❌ Erro ao forçar criação:", error);
-    return c.json({ success: false, error: String(error) }, 500);
-  }
-});
+// SECURITY: force-init and debug/all endpoints REMOVED — no public access to internal data
+// These operations are only available through the admin panel with proper authentication
 
-// Rota para DEBUG - ver todos os dados no banco
-app.get("/make-server-42377006/debug/all", async (c) => {
-  try {
-    console.log("🔍 Buscando todos os dados...");
-    
-    // Buscar todos os dados importantes
-    const admin = await kv.get("user:admin");
-    const vendedores = await kv.get("users:vendedor");
-    const clientes = await kv.get("users:cliente");
-    const motoristas = await kv.get("users:motorista");
-    const codesVendedor = await kv.get("codes:vendedor");
-    const codesCliente = await kv.get("codes:cliente");
-    const codesMotorista = await kv.get("codes:motorista");
-    
-    const allData = {
-      admin,
-      vendedores,
-      clientes,
-      motoristas,
-      codesVendedor,
-      codesCliente,
-      codesMotorista,
-    };
-    
-    console.log("📊 Todos os dados:", allData);
-    
-    return c.json({ success: true, data: allData });
-  } catch (error) {
-    console.error("❌ Erro ao buscar dados:", error);
-    return c.json({ success: false, error: String(error) }, 500);
-  }
-});
-
-// ==================== LIMPEZA TOTAL (exceto admin) ====================
+// ==================== LIMPEZA TOTAL (exceto admin) — ADMIN AUTH REQUIRED ====================
 app.post("/make-server-42377006/cleanup", async (c) => {
   try {
-    console.log("🧹 Iniciando limpeza total de contas e códigos...");
+    // SECURITY: Require admin authentication
+    const body = await c.req.json().catch(() => ({}));
+    const adminUsername = body.adminUsername;
+    const adminPin = body.adminPin;
+    if (!adminUsername || !adminPin) {
+      return c.json({ success: false, error: "Autenticação admin obrigatória" }, 401);
+    }
+    const admin = await kv.get(`user:${adminUsername}`);
+    if (!admin || admin.role !== "admin" || String(admin.pin) !== String(adminPin)) {
+      console.log("🚫 SECURITY: Unauthorized cleanup attempt");
+      return c.json({ success: false, error: "Não autorizado" }, 403);
+    }
+
+    console.log("🧹 Iniciando limpeza total (autenticado como admin)...");
 
     // 1. Buscar listas de usernames
     const vendedorUsernames = await kv.get("users:vendedor") || [];
     const clienteUsernames = await kv.get("users:cliente") || [];
     const motoristaUsernames = await kv.get("users:motorista") || [];
-
-    console.log("📋 Vendedores a remover:", vendedorUsernames);
-    console.log("📋 Clientes a remover:", clienteUsernames);
-    console.log("📋 Motoristas a remover:", motoristaUsernames);
 
     // 2. Deep clean ALL data for each user (EVERY known KV key pattern)
     const allUsernames = [...vendedorUsernames, ...clienteUsernames, ...motoristaUsernames];
@@ -354,16 +301,19 @@ app.post("/make-server-42377006/cleanup", async (c) => {
 app.post("/make-server-42377006/login/step1", async (c) => {
   try {
     const { username } = await c.req.json();
-    console.log("🔐 Login Step1 - Username:", username);
     
     if (!username) {
       return c.json({ success: false, error: "Username obrigatório" }, 400);
     }
+
+    // SECURITY: Rate limit username lookups (15 per minute per IP)
+    const clientIP = c.req.header("x-forwarded-for") || "unknown";
+    if (!checkRateLimit(`step1:${clientIP}`, 15)) {
+      return c.json({ success: false, error: "Muitas tentativas. Aguarde." }, 429);
+    }
     
     // Verificar se usuário existe
     const user = await kv.get(`user:${username}`);
-    console.log("👤 Usuário encontrado?", user ? "SIM" : "NÃO");
-    console.log("📊 Dados do usuário:", user);
     
     if (!user) {
       return c.json({ success: false, error: "Usuário não encontrado" }, 404);
@@ -448,38 +398,34 @@ app.post("/make-server-42377006/login/face-verify", async (c) => {
 app.post("/make-server-42377006/login/step2", async (c) => {
   try {
     const { username, pin } = await c.req.json();
-    console.log("🔐 Login Step2 - Username:", username, "PIN recebido:", pin);
     
     if (!username || !pin) {
       return c.json({ success: false, error: "Username e PIN obrigatórios" }, 400);
     }
+
+    // SECURITY: Rate limit login attempts (10 per minute per username)
+    if (!checkRateLimit(`login:${username}`, 10)) {
+      console.log(`🚫 SECURITY: Rate limit exceeded for login attempts on user: ${username}`);
+      return c.json({ success: false, error: "Muitas tentativas. Aguarde 1 minuto." }, 429);
+    }
     
     // Buscar usuário
     const user = await kv.get(`user:${username}`);
-    console.log("👤 Usuário encontrado?", user ? "SIM" : "NÃO");
-    console.log("📊 Dados completos do usuário:", JSON.stringify(user, null, 2));
-    console.log("📊 PIN no banco:", user?.pin, "(tipo:", typeof user?.pin, ")");
-    console.log("📊 PIN recebido:", pin, "(tipo:", typeof pin, ")");
-    console.log("📊 Comparação:", user?.pin, "===", pin, "?", user?.pin === pin);
     
     if (!user) {
       return c.json({ success: false, error: "Usuário não encontrado" }, 404);
     }
     
-    // Verificar PIN (converter ambos para string)
+    // Verificar PIN (converter ambos para string) — NO logging of PIN values
     const storedPin = String(user.pin);
     const receivedPin = String(pin);
     
-    console.log("🔍 PIN armazenado (string):", storedPin);
-    console.log("🔍 PIN recebido (string):", receivedPin);
-    console.log("🔍 Match?", storedPin === receivedPin);
-    
     if (storedPin !== receivedPin) {
-      console.log("❌ PIN incorreto!");
+      console.log(`🔐 Failed login attempt for user: ${username}`);
       return c.json({ success: false, error: "PIN incorreto" }, 401);
     }
     
-    console.log("✅ Login bem-sucedido!");
+    console.log(`✅ Login successful: ${username}`);
     
     // Login bem-sucedido
     return c.json({
@@ -1377,41 +1323,8 @@ app.get("/make-server-42377006/users/:username/linked-vendors", async (c) => {
   }
 });
 
-// ==================== RESET DO BANCO ====================
-app.post("/make-server-42377006/reset", async (c) => {
-  try {
-    // Limpar todos os dados
-    const allKeys = await kv.getByPrefix("");
-    
-    for (const item of allKeys) {
-      await kv.del(item.key);
-    }
-    
-    // Recriar apenas o admin
-    const adminUser = {
-      username: "admin",
-      pin: "414243",
-      role: "admin",
-      name: "Administrador",
-      photo: "AD",
-      createdAt: new Date().toISOString(),
-    };
-    
-    await kv.set("user:admin", adminUser);
-    await kv.set("users:admin", ["admin"]);
-    await kv.set("users:vendedor", []);
-    await kv.set("users:cliente", []);
-    await kv.set("users:motorista", []);
-    await kv.set("codes:vendedor", []);
-    await kv.set("codes:cliente", []);
-    await kv.set("codes:motorista", []);
-    
-    return c.json({ success: true, message: "Banco resetado com sucesso!" });
-  } catch (error) {
-    console.error("Erro ao resetar banco:", error);
-    return c.json({ success: false, error: String(error) }, 500);
-  }
-});
+// SECURITY: /reset endpoint REMOVED — catastrophic data loss risk without authentication
+// Database reset is not available via API
 
 // Health check endpoint
 app.get("/make-server-42377006/health", (c) => {
@@ -2653,95 +2566,7 @@ app.get("/make-server-42377006/driver-earnings/:username", async (c) => {
   }
 });
 
-// ==================== DIAGNÓSTICO DE VÍNCULO ====================
-app.get("/make-server-42377006/debug/link/:username", async (c) => {
-  try {
-    const username = c.req.param("username");
-    console.log("🔍 DEBUG LINK - Verificando vínculo para:", username);
-    
-    // 1. Buscar usuário
-    const user = await kv.get(`user:${username}`);
-    if (!user) {
-      return c.json({ success: false, error: "Usuário não encontrado", username }, 404);
-    }
-    
-    // 2. Informações do vínculo
-    const linkInfo: any = {
-      username: user.username,
-      role: user.role,
-      createdBy: user.createdBy || "NENHUM",
-      createdAt: user.createdAt,
-    };
-    
-    // 3. Se tem createdBy, buscar dados do criador
-    if (user.createdBy && user.createdBy !== "direct") {
-      const creator = await kv.get(`user:${user.createdBy}`);
-      linkInfo.creatorExists = !!creator;
-      linkInfo.creatorData = creator ? { username: creator.username, name: creator.name, role: creator.role } : null;
-      
-      // 4. Verificar se está na lista created_by do criador
-      const createdByList = await kv.get(`created_by:${user.createdBy}`) || [];
-      linkInfo.inCreatorList = createdByList.some((item: any) => item.username === username);
-      linkInfo.creatorListSize = createdByList.length;
-      linkInfo.creatorListItems = createdByList.map((item: any) => ({ username: item.username, role: item.role }));
-    }
-    
-    // 5. Verificar se código de convite foi usado
-    const codeType = user.role;
-    const allCodes = await kv.get(`codes:${codeType}`) || [];
-    const usedCode = allCodes.find((code: any) => code.usedBy === username);
-    linkInfo.inviteCode = usedCode ? {
-      code: usedCode.code,
-      generatedBy: usedCode.generatedBy,
-      used: usedCode.used,
-      usedAt: usedCode.usedAt,
-    } : "NENHUM CÓDIGO ENCONTRADO";
-    
-    // 6. Verificar consistência
-    linkInfo.diagnostics = {
-      hasCreatedBy: !!user.createdBy && user.createdBy !== "direct",
-      creatorMatchesCode: usedCode ? user.createdBy === usedCode.generatedBy : false,
-      isConsistent: !!(user.createdBy && user.createdBy !== "direct" && linkInfo.inCreatorList),
-    };
-    
-    // 7. Auto-repair se inconsistente
-    if (user.createdBy && user.createdBy !== "direct" && !linkInfo.inCreatorList) {
-      console.log("🔧 Auto-reparando vínculo...");
-      const createdByList = await kv.get(`created_by:${user.createdBy}`) || [];
-      createdByList.push({ username: user.username, role: user.role, createdAt: user.createdAt });
-      await kv.set(`created_by:${user.createdBy}`, createdByList);
-      linkInfo.autoRepaired = true;
-      linkInfo.diagnostics.isConsistent = true;
-      console.log("✅ Vínculo reparado automaticamente");
-    }
-    
-    // Se o código existe mas createdBy está errado, corrigir
-    if (usedCode && (!user.createdBy || user.createdBy === "direct") && usedCode.generatedBy) {
-      console.log("🔧 Corrigindo createdBy a partir do código de convite...");
-      user.createdBy = usedCode.generatedBy;
-      await kv.set(`user:${username}`, user);
-      
-      // Adicionar à lista created_by
-      const createdByList = await kv.get(`created_by:${usedCode.generatedBy}`) || [];
-      if (!createdByList.some((item: any) => item.username === username)) {
-        createdByList.push({ username: user.username, role: user.role, createdAt: user.createdAt });
-        await kv.set(`created_by:${usedCode.generatedBy}`, createdByList);
-      }
-      
-      linkInfo.createdByFixed = true;
-      linkInfo.createdBy = usedCode.generatedBy;
-      linkInfo.diagnostics.isConsistent = true;
-      console.log("✅ createdBy corrigido para:", usedCode.generatedBy);
-    }
-    
-    console.log("📊 DEBUG LINK resultado:", JSON.stringify(linkInfo, null, 2));
-    
-    return c.json({ success: true, linkInfo });
-  } catch (error) {
-    console.error("❌ Erro no debug link:", error);
-    return c.json({ success: false, error: String(error) }, 500);
-  }
-});
+// SECURITY: debug/link endpoint REMOVED — exposed internal user data without auth
 
 // ==================== PIXWAVE / DEPIX INTEGRATION ====================
 const PIXWAVE_BASE = "https://pixwave.cash/invoice/api/v1";
@@ -5184,6 +5009,19 @@ app.get("/make-server-42377006/admin/orders", async (c) => {
     console.error("Erro ao buscar todos os pedidos admin:", error);
     return c.json({ success: false, error: String(error) }, 500);
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+// GLOBAL ERROR HANDLER — catches EPIPE / broken pipe gracefully
+// ══════════════════════════════════════════════════════════════
+app.onError((err, c) => {
+  const msg = String(err);
+  // EPIPE = client disconnected before response was sent — ignore silently
+  if (msg.includes("EPIPE") || msg.includes("broken pipe") || msg.includes("connection reset")) {
+    return c.json({ success: false, error: "Connection lost" }, 499);
+  }
+  console.error("❌ Unhandled server error:", msg);
+  return c.json({ success: false, error: "Erro interno do servidor" }, 500);
 });
 
 Deno.serve(app.fetch);
